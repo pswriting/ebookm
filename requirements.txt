@@ -1,9 +1,19 @@
-streamlit
-anthropic
-google-generativeai
-google-genai
-youtube-transcript-api
-python-docx
-requests
-streamlit-javascript
-extra-streamlit-components
+# Writey · CASHMAKER — 전자책 제작 앱 의존성
+# 설치:  pip install -r requirements.txt
+
+# --- 핵심 (필수) ---
+streamlit>=1.40.0
+anthropic>=0.40.0          # Claude API (목차·본문·프롤로그·에필로그 생성)
+requests>=2.31.0           # HTTP 요청
+python-docx>=1.1.0         # Word(.docx) 내보내기
+
+# --- 이미지 생성 (선택, Gemini/Imagen) ---
+google-generativeai>=0.8.0 # import google.generativeai as genai
+google-genai>=0.3.0        # from google import genai (신 SDK, Imagen)
+
+# --- YouTube 자막 추출 (선택) ---
+youtube-transcript-api>=0.6.2
+
+# --- 클라우드 배포 보조 (선택) ---
+streamlit-javascript>=0.1.5        # 브라우저 ID
+extra-streamlit-components>=0.1.71 # 쿠키 매니저 (API 키 저장)
