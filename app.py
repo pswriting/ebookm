@@ -10,7 +10,6 @@ logging.getLogger('anthropic').setLevel(logging.ERROR)
 logging.getLogger('httpx').setLevel(logging.ERROR)
 
 import streamlit as st
-import streamlit.components.v1 as components
 import re
 import json
 import html
@@ -18,12 +17,6 @@ import base64
 import urllib.parse
 import uuid
 import platform
-
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    PILLOW_AVAILABLE = True
-except Exception:
-    PILLOW_AVAILABLE = False
 import hashlib
 import requests
 from datetime import datetime, timedelta
@@ -74,7 +67,6 @@ try:
     from docx.shared import Pt, Inches, Cm, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT, WD_TAB_LEADER
     from docx.enum.table import WD_TABLE_ALIGNMENT
-    from docx.enum.section import WD_SECTION
     from docx.enum.style import WD_STYLE_TYPE
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
@@ -134,6 +126,11 @@ def get_video_base64(video_path):
     except:
         return None
 
+@st.cache_data(show_spinner=False)
+def get_video_base64_cached(video_path):
+    """헤더 배경 영상 — 세션 간 캐시 (rerun마다 재인코딩 방지)"""
+    return get_video_base64(video_path)
+
 st.set_page_config(page_title="Writey", layout="wide", page_icon="✍")
 
 # 쿠키 매니저 초기화 및 데이터 불러오기/저장
@@ -174,10 +171,10 @@ if COOKIE_AVAILABLE:
 
     # pending 값을 쿠키에 저장
     if 'pending_save_password' in st.session_state:
-        cookie_manager.set('writey_password', st.session_state['pending_save_password'], expires_at=datetime.now() + timedelta(days=COOKIE_LIFETIME_DAYS))
+        cookie_manager.set('writey_password', st.session_state['pending_save_password'], key='set_writey_pw', expires_at=datetime.now() + timedelta(days=COOKIE_LIFETIME_DAYS))
         del st.session_state['pending_save_password']
     if 'pending_save_api' in st.session_state:
-        cookie_manager.set('writey_api_key', st.session_state['pending_save_api'], expires_at=datetime.now() + timedelta(days=COOKIE_LIFETIME_DAYS))
+        cookie_manager.set('writey_api_key', st.session_state['pending_save_api'], key='set_writey_api', expires_at=datetime.now() + timedelta(days=COOKIE_LIFETIME_DAYS))
         del st.session_state['pending_save_api']
 else:
     cookie_manager = None
@@ -201,416 +198,418 @@ def get_saved_api_key():
 # ==========================================
 st.markdown("""
 <style>
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700&display=swap');
 
-/* S-Core Dream 폰트 */
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-1Thin.woff') format('woff');
-    font-weight: 100;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-2ExtraLight.woff') format('woff');
-    font-weight: 200;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-3Light.woff') format('woff');
-    font-weight: 300;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-4Regular.woff') format('woff');
-    font-weight: 400;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-5Medium.woff') format('woff');
-    font-weight: 500;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-6Bold.woff') format('woff');
-    font-weight: 600;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-7ExtraBold.woff') format('woff');
-    font-weight: 700;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-8Heavy.woff') format('woff');
-    font-weight: 800;
-}
-@font-face {
-    font-family: 'S-CoreDream';
-    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-9Black.woff') format('woff');
-    font-weight: 900;
-}
+/* ═══════════════════════════════════════════════════════
+   WRITEY — Quiet Atelier Design System
+   다크 잉크 배경 · 아이보리 타이포 · 앤티크 브라스 액센트
+   원칙: 골드는 "칠하는 색"이 아니라 "긋는 선". 빛나는 효과 금지.
+   ═══════════════════════════════════════════════════════ */
 
 :root {
-    --gold: #C9A24B;
-    --gold-light: #E0C074;
-    --gold-dark: #A8852F;
-    --rose-gold: #b76e79;
-    --cream: #FAF8F4;
-    --charcoal: #141416;
-    --dark: #0B0B0D;
-    --card: rgba(255,255,255,0.025);
-    --card2: rgba(255,255,255,0.05);
-    --text: #F5F3EF;
-    --text2: #8A8780;
-    --text3: #7A776F;
-    --line: rgba(201,162,75,0.18);
-    --line2: rgba(255,255,255,0.06);
-    --glow: rgba(201,162,75,0.32);
-    --success: #6FA86F;
-    --warning: #E0C074;
-    --danger: #C97A6F;
+    --gold: #A98E5F;            /* 앤티크 브라스 — 가는 선과 라벨에만 */
+    --gold-light: #C2AA7E;
+    --gold-dark: #8C744C;
+    --rose-gold: #A98E5F;
+    --cream: #EDE9E0;
+    --ivory: #EAE5D8;           /* 주요 버튼 색 — 골드 대신 아이보리 */
+    --charcoal: #14130F;
+    --dark: #0E0D0B;
+    --card: rgba(255,255,255,0.022);
+    --card2: rgba(255,255,255,0.045);
+    --text: #ECE9E2;
+    --text2: #98948A;
+    --text3: #6E6A60;
+    --line: rgba(169,142,95,0.20);
+    --line2: rgba(255,255,255,0.07);
+    --glow: rgba(169,142,95,0.10);
+    --success: #7C9B7C;
+    --warning: #C2AA7E;
+    --danger: #B3766C;
+    --serif: 'Noto Serif KR', 'Nanum Myeongjo', serif;
+    --sans: 'Pretendard Variable', 'Pretendard', -apple-system, sans-serif;
 }
 
-/* 애니메이션 정의 */
+/* 단 하나의 애니메이션만 — 절제된 페이드 */
 @keyframes fadeInUp {
-    from { opacity: 0; transform: translateY(30px); }
+    from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
 }
-@keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-}
-@keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.02); }
-}
-@keyframes borderGlow {
-    0%, 100% { box-shadow: 0 0 5px var(--glow), inset 0 0 5px rgba(201,162,75,0.1); }
-    50% { box-shadow: 0 0 20px var(--glow), inset 0 0 10px rgba(201,162,75,0.2); }
-}
-@keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-5px); }
-}
-@keyframes goldShine {
-    0% { background-position: -100% 0; }
-    100% { background-position: 200% 0; }
+@keyframes shimmer { 0%,100% { opacity:1; } }
+@keyframes pulse { 0%,100% { opacity:1; } }
+@keyframes borderGlow { 0%,100% { box-shadow:none; } }
+@keyframes float { 0%,100% { transform:none; } }
+@keyframes goldShine { 0%,100% { background-position:0 0; } }
+@media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
 }
 
 *:not([data-testid*="Icon"]):not(.material-icons):not([class*="icon"]):not(span[aria-hidden="true"]) {
-    font-family: 'S-CoreDream', 'Pretendard', -apple-system, sans-serif !important;
+    font-family: var(--sans) !important;
 }
 /* 아이콘 폰트 복원 */
 [data-testid*="Icon"], .material-icons, span[aria-hidden="true"], button[kind="header"] span {
     font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
 }
 .stDeployButton, footer, #MainMenu { display: none !important; }
-/* 헤더 투명하게 (사이드바 버튼은 보임) */
-header[data-testid="stHeader"] {
-    background: transparent !important;
-}
+header[data-testid="stHeader"] { background: transparent !important; }
 
-/* 럭셔리 배경 - 미세한 그라데이션 */
+/* 배경 — 평평한 웜 잉크. 그라데이션 조명 없음 */
 .stApp {
-    background:
-        radial-gradient(ellipse at 20% 0%, rgba(201,162,75,0.04) 0%, transparent 55%),
-        radial-gradient(ellipse at 80% 100%, rgba(201,162,75,0.025) 0%, transparent 55%),
-        linear-gradient(180deg, #0B0B0D 0%, #08080A 50%, #0B0B0D 100%) !important;
-    background-attachment: fixed;
+    background: #0E0D0B !important;
 }
 
-.main .block-container { max-width: 1000px; padding: 3rem 2rem; }
+.main .block-container { max-width: 920px; padding: 3.5rem 2rem 5rem; }
 
-/* 사이드바 - 미니멀 */
-[data-testid="stSidebar"] {
-    background: var(--charcoal) !important;
-    border-right: 1px solid var(--line);
+/* ───────── 타이포그래피 ─────────
+   제목은 세리프(출판사 도록), 본문은 프리텐다드.
+   그라데이션 텍스트 · 글로우 · 과한 자간 금지 */
+h1, h2, h3 {
+    font-family: var(--serif) !important;
+    color: var(--cream) !important;
+    letter-spacing: -0.01em !important;
 }
-[data-testid="stSidebar"] * { color: var(--text2) !important; }
-
-/* 타이포그래피 - 가독성 향상 */
-h1, h2, h3 { color: var(--text) !important; font-weight: 300 !important; letter-spacing: 0.5px; }
-h1 { font-size: 34px !important; color: var(--cream) !important; font-weight: 300 !important; }
-h2 { font-size: 26px !important; margin-bottom: 20px !important; font-weight: 300 !important; }
-h3 { font-size: 21px !important; color: var(--gold) !important; font-weight: 400 !important; }
-p, span, label, div { color: var(--text) !important; font-size: 16px !important; line-height: 1.7 !important; }
-li { font-size: 16px !important; line-height: 1.8 !important; }
-
-/* 버튼 - 채워진 골드 그라데이션 (첨부 디자인) */
-.stButton > button {
-    background: linear-gradient(135deg, #E0C074 0%, #C9A24B 100%) !important;
-    color: #0B0B0D !important;
-    -webkit-text-fill-color: #0B0B0D !important;
-    border: none !important;
-    border-radius: 12px;
-    font-weight: 600;
+h1 { font-size: 30px !important; font-weight: 600 !important; }
+h2 { font-size: 23px !important; font-weight: 600 !important; margin-bottom: 18px !important; }
+h3 { font-size: 18px !important; font-weight: 600 !important; color: var(--text) !important; }
+p, span, label, div { color: var(--text) !important; font-size: 15.5px; line-height: 1.75; }
+li { font-size: 15.5px !important; line-height: 1.85 !important; }
+/* 위젯 라벨(질문 텍스트) — 다크 배경에서 항상 보이게 */
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label,
+.stTextInput label, .stTextArea label, .stSelectbox label, .stNumberInput label {
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
     font-size: 15px !important;
-    padding: 15px 36px;
-    letter-spacing: 0.4px;
-    text-transform: none;
-    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-    box-shadow: 0 6px 20px rgba(201,162,75,0.22);
+}
+strong, b { color: var(--cream); }
+a { color: var(--gold-light) !important; text-decoration: none; }
+
+/* ───────── 버튼 ─────────
+   기본 버튼: 조용한 고스트. 화면이 버튼으로 소리치지 않게.
+   primary/다운로드: 아이보리 단색 — 이 반전이 시그니처. */
+.stButton > button {
+    background: rgba(255,255,255,0.03) !important;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 14.5px !important;
+    padding: 13px 28px;
+    letter-spacing: 0.01em;
+    transition: border-color .2s ease, background .2s ease;
+    box-shadow: none;
 }
 .stButton > button * {
-    color: #0B0B0D !important;
-    -webkit-text-fill-color: #0B0B0D !important;
-}
-.stButton > button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent);
-    transition: left 0.6s ease;
-}
-.stButton > button:hover::before {
-    left: 100%;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
 }
 .stButton > button:hover {
-    background: linear-gradient(135deg, #EBCE86 0%, #D4AC56 100%) !important;
-    box-shadow: 0 10px 32px rgba(201,162,75,0.4);
-    transform: translateY(-2px);
+    background: rgba(255,255,255,0.055) !important;
+    border-color: rgba(169,142,95,0.45) !important;
+    transform: none;
+    box-shadow: none;
 }
-.stButton > button:active {
-    transform: translateY(0);
-    box-shadow: 0 4px 15px rgba(201,162,75,0.3);
+.stButton > button:active { transform: translateY(1px); }
+.stButton > button:focus-visible {
+    outline: none !important;
+    box-shadow: 0 0 0 2px rgba(169,142,95,0.35) !important;
 }
 
-/* 입력 필드 - 밝은 배경 + 검은 글씨 */
-.stTextInput input, .stTextArea textarea, .stNumberInput input {
-    background: #ffffff !important;
-    background-color: #ffffff !important;
-    border: 0.5px solid var(--line) !important;
-    border-radius: 10px !important;
-    color: #000000 !important;
-    -webkit-text-fill-color: #000000 !important;
-    caret-color: #000000 !important;
-    padding: 18px !important;
-    font-size: 17px !important;
+/* Primary — 아이보리 단색, 다크 잉크 텍스트 */
+.stButton > button[kind="primary"],
+.stButton > button[kind="primaryFormSubmit"],
+.stButton > button[data-testid="stBaseButton-primary"],
+.stButton > button[data-testid="baseButton-primary"],
+button[kind="primary"] {
+    background: var(--ivory) !important;
+    color: #14130F !important;
+    -webkit-text-fill-color: #14130F !important;
+    border: 1px solid var(--ivory) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: none !important;
+}
+.stButton > button[kind="primary"] *,
+.stButton > button[data-testid="stBaseButton-primary"] *,
+button[kind="primary"] * {
+    color: #14130F !important;
+    -webkit-text-fill-color: #14130F !important;
+}
+.stButton > button[kind="primary"]:hover,
+button[kind="primary"]:hover {
+    background: #FFFFFF !important;
+    border-color: #FFFFFF !important;
+    transform: none;
+}
+
+/* 다운로드 버튼 — primary와 동일 */
+.stDownloadButton > button, .stDownloadButton button {
+    background: var(--ivory) !important;
+    color: #14130F !important;
+    -webkit-text-fill-color: #14130F !important;
+    border: 1px solid var(--ivory) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+    box-shadow: none !important;
+    transition: background .2s ease;
+    text-shadow: none;
+}
+.stDownloadButton > button *, .stDownloadButton button * {
+    color: #14130F !important;
+    -webkit-text-fill-color: #14130F !important;
+}
+.stDownloadButton > button:hover, .stDownloadButton button:hover {
+    background: #FFFFFF !important;
+    background-position: 0 0 !important;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ───────── 입력 필드 — 다크 서피스 + 헤어라인 ───────── */
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input {
+    background: #16150F !important;
+    background-color: #16150F !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 8px !important;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
+    caret-color: var(--gold-light) !important;
+    padding: 14px 16px !important;
+    font-size: 15.5px !important;
+    box-shadow: none !important;
+    transition: border-color .2s ease;
 }
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
-    border-color: var(--gold) !important;
-    box-shadow: 0 0 0 2px rgba(201,162,75,0.2) !important;
+    border-color: rgba(169,142,95,0.6) !important;
+    box-shadow: 0 0 0 2px rgba(169,142,95,0.14) !important;
+}
+input::placeholder, textarea::placeholder {
+    color: var(--text3) !important;
+    -webkit-text-fill-color: var(--text3) !important;
 }
 
-/* 셀렉트박스 컨테이너 */
-.stSelectbox > div > div {
-    background: var(--card) !important;
-    border: 0.5px solid var(--line) !important;
-    border-radius: 10px;
-}
-/* 셀렉트박스 선택된 값 - 흰색 */
+/* 셀렉트박스 — 입력창과 동일한 서피스 */
+.stSelectbox > div > div,
 .stSelectbox [data-baseweb="select"] > div {
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
+    background: #16150F !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 8px !important;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
+}
+.stSelectbox [data-baseweb="select"] span {
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
 }
 
-/* 스코어 카드 - 럭셔리 */
+/* 드롭다운 메뉴 — 다크로 통일 (흰 팝업 제거) */
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="menu"],
+[role="listbox"] {
+    background: #1B1A15 !important;
+    background-color: #1B1A15 !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 8px !important;
+}
+[data-baseweb="menu"] *, [role="listbox"] *, [role="option"], [role="option"] * {
+    background: transparent !important;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
+}
+[role="option"]:hover, [data-baseweb="menu"] li:hover {
+    background: rgba(255,255,255,0.06) !important;
+}
+[aria-selected="true"][role="option"] {
+    background: rgba(169,142,95,0.12) !important;
+}
+select, select option { color: var(--text) !important; background: #1B1A15 !important; }
+
+/* ───────── 사이드바 ───────── */
+[data-testid="stSidebar"] {
+    background: #100F0C !important;
+    border-right: 1px solid var(--line2) !important;
+}
+[data-testid="stSidebar"] * { color: var(--text2) !important; }
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+    color: var(--cream) !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: transparent !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 7px !important;
+    box-shadow: none !important;
+    font-weight: 500 !important;
+    color: var(--text2) !important;
+    -webkit-text-fill-color: var(--text2) !important;
+}
+[data-testid="stSidebar"] .stButton > button * {
+    color: var(--text2) !important;
+    -webkit-text-fill-color: var(--text2) !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    border-color: rgba(169,142,95,0.5) !important;
+    background: rgba(169,142,95,0.06) !important;
+    transform: none !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover * {
+    color: var(--cream) !important;
+    -webkit-text-fill-color: var(--cream) !important;
+}
+
+/* ───────── 카드 시스템 — 평평한 서피스 + 헤어라인 ───────── */
 .score-card {
-    background: linear-gradient(145deg, var(--card) 0%, rgba(30,30,30,0.95) 100%) !important;
-    border: 0.5px solid var(--gold);
-    border-radius: 20px;
-    padding: 50px 40px;
+    background: var(--card) !important;
+    border: 1px solid var(--line2);
+    border-radius: 12px;
+    padding: 48px 40px;
     text-align: center;
-    animation: fadeInUp 0.6s ease-out;
-    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-    box-shadow: 0 10px 40px rgba(201,162,75,0.15);
+    animation: fadeInUp .4s ease-out;
+    box-shadow: none;
 }
-.score-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, var(--gold), transparent);
-    opacity: 1;
-}
-.score-card:hover {
-    border-color: var(--gold);
-    box-shadow: 0 20px 60px rgba(201,162,75,0.3), inset 0 1px 0 rgba(201,162,75,0.1);
-    transform: translateY(-5px);
-}
-.score-card:hover::before {
-    opacity: 1;
-}
+.score-card::before { display: none; }
+.score-card:hover { border-color: var(--line); transform: none; box-shadow: none; }
 .score-number {
-    font-size: 140px;
-    font-weight: 300;
-    background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 50%, var(--gold-dark) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-family: var(--serif);
+    font-size: 96px;
+    font-weight: 500;
+    color: var(--cream);
+    -webkit-text-fill-color: var(--cream);
+    background: none;
     line-height: 1;
-    letter-spacing: -4px;
-    animation: fadeInUp 0.8s ease-out;
-    filter: drop-shadow(0 2px 4px rgba(201,162,75,0.3));
+    letter-spacing: -0.02em;
+    filter: none;
 }
 
-/* 정보 카드 + 애니메이션 */
 .info-card {
     background: transparent !important;
     border: none;
     border-left: 2px solid var(--gold);
-    padding: 20px 24px;
-    margin: 20px 0;
-    animation: fadeInUp 0.5s ease-out;
-    transition: all 0.3s ease;
+    padding: 16px 22px;
+    margin: 18px 0;
+    animation: fadeInUp .35s ease-out;
 }
-.info-card:hover {
-    background: rgba(201,169,98,0.05) !important;
-    border-left-width: 4px;
-    padding-left: 22px;
-}
+.info-card:hover { background: var(--card) !important; border-left-width: 2px; padding-left: 22px; }
 
-/* 스탯 박스 + 애니메이션 */
 .stat-box {
     background: var(--card) !important;
-    border: 0.5px solid var(--line2);
-    border-radius: 14px;
-    padding: 32px;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    padding: 28px 24px;
     text-align: center;
-    animation: fadeInUp 0.5s ease-out;
-    transition: all 0.4s ease;
+    animation: fadeInUp .35s ease-out;
+    transition: border-color .2s ease;
 }
-.stat-box:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-    border-color: var(--gold);
-}
+.stat-box:hover { transform: none; box-shadow: none; border-color: var(--line); }
 .stat-value {
-    font-size: 42px;
-    font-weight: 200;
-    color: var(--gold) !important;
-    letter-spacing: -2px;
-    transition: transform 0.3s ease;
+    font-family: var(--serif);
+    font-size: 34px;
+    font-weight: 500;
+    color: var(--cream) !important;
+    letter-spacing: -0.01em;
 }
-.stat-box:hover .stat-value {
-    transform: scale(1.05);
-}
+.stat-box:hover .stat-value { transform: none; }
 .stat-label {
     font-size: 11px;
     color: var(--text2) !important;
-    margin-top: 12px;
+    margin-top: 10px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    letter-spacing: 3px;
 }
 
-/* 데이터 카드 + 애니메이션 */
 .data-card {
     background: var(--card) !important;
     border-left: 2px solid var(--gold);
-    padding: 20px 24px;
-    margin: 16px 0;
-    animation: fadeInUp 0.4s ease-out;
-    transition: all 0.3s ease;
+    padding: 18px 22px;
+    margin: 14px 0;
+    animation: fadeInUp .3s ease-out;
 }
-.data-card:hover {
-    border-left-width: 4px;
-    background: var(--card2) !important;
-}
+.data-card:hover { border-left-width: 2px; background: var(--card2) !important; }
 
-/* 서머리 허브 + 애니메이션 */
 .summary-hub {
     background: var(--card) !important;
-    border: 0.5px solid var(--line2);
-    border-radius: 14px;
-    padding: 40px;
-    animation: fadeInUp 0.5s ease-out;
-    transition: all 0.4s ease;
+    border: 1px solid var(--line2);
+    border-radius: 12px;
+    padding: 36px;
+    animation: fadeInUp .35s ease-out;
 }
-.summary-hub:hover {
-    border-color: var(--gold);
-}
+.summary-hub:hover { border-color: var(--line); }
 
-/* 배지 - 미니멀 + 펄스 */
-.verdict-go {
+/* 판정 배지 — 작고 단정하게 */
+.verdict-go, .verdict-wait, .verdict-no {
     background: transparent !important;
-    color: var(--success) !important;
-    border: 1px solid var(--success);
-    padding: 12px 32px;
-    border-radius: 20px;
-    font-weight: 400;
+    padding: 9px 22px;
+    border-radius: 100px;
+    font-weight: 500;
     font-size: 12px;
-    letter-spacing: 3px;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
-    animation: fadeInUp 0.6s ease-out;
+    animation: fadeInUp .4s ease-out;
 }
-.verdict-wait {
-    background: transparent !important;
-    color: var(--warning) !important;
-    border: 1px solid var(--warning);
-    padding: 12px 32px;
-    border-radius: 20px;
-    font-weight: 400;
-    font-size: 12px;
-    letter-spacing: 3px;
-    animation: fadeInUp 0.6s ease-out;
-}
-.verdict-no {
-    background: transparent !important;
-    color: var(--danger) !important;
-    border: 1px solid var(--danger);
-    padding: 12px 32px;
-    border-radius: 20px;
-    font-weight: 400;
-    font-size: 12px;
-    letter-spacing: 3px;
-    animation: fadeInUp 0.6s ease-out;
-}
+.verdict-go { color: var(--success) !important; border: 1px solid rgba(124,155,124,0.5); }
+.verdict-wait { color: var(--warning) !important; border: 1px solid rgba(194,170,126,0.5); }
+.verdict-no { color: var(--danger) !important; border: 1px solid rgba(179,118,108,0.5); }
 
-/* 네비게이션 */
+/* ───────── 네비게이션 — 잡지 목차처럼 ───────── */
 .premium-nav-container {
     background: transparent;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    padding: 0;
-    margin-bottom: 48px;
+    border-top: 1px solid var(--line2);
+    border-bottom: 1px solid var(--line2);
+    padding: 4px 0;
+    margin-bottom: 44px;
+}
+.premium-nav-container .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text2) !important;
+    -webkit-text-fill-color: var(--text2) !important;
+    font-size: 14px !important;
+    letter-spacing: 0.02em;
+    padding: 14px 10px;
+}
+.premium-nav-container .stButton > button:hover {
+    color: var(--cream) !important;
+    -webkit-text-fill-color: var(--cream) !important;
+    background: transparent !important;
 }
 .nav-item {
-    padding: 18px 12px;
+    padding: 16px 10px;
     text-align: center;
     font-size: 14px;
     color: var(--text2);
-    letter-spacing: 1px;
-    transition: all 0.3s ease;
+    letter-spacing: 0.02em;
 }
 .nav-item.active {
-    background: linear-gradient(135deg, rgba(201,162,75,0.2) 0%, rgba(201,162,75,0.1) 100%);
-    color: var(--gold) !important;
+    background: transparent;
+    color: var(--cream) !important;
     font-weight: 600;
-    border-bottom: 3px solid var(--gold);
-    box-shadow: 0 4px 15px rgba(201,162,75,0.2);
+    border-bottom: 2px solid var(--gold);
+    box-shadow: none;
 }
 
-/* 섹션 타이틀 - 미니멀 (첨부 디자인) */
+/* ───────── 섹션 타이틀 ───────── */
 .section-title-box {
-    background: rgba(255,255,255,0.025);
-    border: 0.5px solid var(--line2);
-    border-radius: 14px;
-    padding: 30px 36px;
-    margin-bottom: 35px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--line2);
+    border-radius: 0;
+    padding: 0 0 22px 0;
+    margin-bottom: 34px;
     text-align: left;
-    position: relative;
-    overflow: hidden;
-    animation: fadeInUp 0.5s ease-out;
+    animation: fadeInUp .35s ease-out;
 }
 .section-title-box h2 {
-    font-size: 26px !important;
-    color: #FAF8F4 !important;
-    margin: 0 0 8px 0 !important;
-    font-weight: 300 !important;
-    letter-spacing: 0.5px;
+    font-family: var(--serif) !important;
+    font-size: 24px !important;
+    color: var(--cream) !important;
+    margin: 0 0 6px 0 !important;
+    font-weight: 600 !important;
 }
 .section-title-box p {
     color: var(--text2) !important;
@@ -619,226 +618,201 @@ li { font-size: 16px !important; line-height: 1.8 !important; }
 }
 .section-step {
     display: inline-block;
-    background: transparent;
     color: var(--gold) !important;
     font-size: 11px;
-    font-weight: 500;
-    padding: 0;
-    margin-bottom: 12px;
+    font-weight: 600;
+    margin-bottom: 10px;
     letter-spacing: 0.22em;
 }
 
-/* 제목 카드 + 애니메이션 */
+/* ───────── 제목 카드 ───────── */
 .title-card {
     background: var(--card);
-    border: 0.5px solid var(--line2);
-    border-radius: 12px;
-    padding: 28px;
-    margin: 16px 0;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: fadeInUp 0.5s ease-out;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    padding: 24px 26px;
+    margin: 14px 0;
+    transition: border-color .2s ease, background .2s ease;
+    animation: fadeInUp .35s ease-out;
 }
 .title-card:hover {
-    border-color: var(--gold);
-    background: rgba(201,169,98,0.05);
-    transform: translateX(8px);
-    box-shadow: -4px 0 20px rgba(201,169,98,0.15);
+    border-color: var(--line);
+    background: var(--card2);
+    transform: none;
+    box-shadow: none;
 }
 .title-main {
-    font-size: 18px;
-    font-weight: 400;
+    font-size: 17px;
+    font-weight: 500;
     color: var(--text) !important;
-    letter-spacing: 1px;
-    transition: color 0.3s ease;
+    letter-spacing: 0;
 }
-.title-card:hover .title-main {
-    color: var(--gold) !important;
-}
-.title-sub {
-    font-size: 13px;
-    color: var(--text2) !important;
-    margin-top: 8px;
-}
+.title-card:hover .title-main { color: var(--cream) !important; }
+.title-sub { font-size: 13px; color: var(--text2) !important; margin-top: 7px; }
 
-/* 로그인 - 럭셔리 */
+/* ───────── 로그인 ───────── */
 .login-card {
-    max-width: 420px;
-    margin: 100px auto;
-    padding: 70px 50px;
-    background: linear-gradient(145deg, rgba(26,26,31,0.98) 0%, rgba(11,11,13,0.98) 100%);
-    border: 0.5px solid var(--line);
-    border-radius: 16px;
+    max-width: 400px;
+    margin: 110px auto 36px;
+    padding: 64px 44px 56px;
+    background: var(--card);
+    border: 1px solid var(--line2);
+    border-radius: 14px;
     text-align: center;
-    animation: fadeInUp 0.8s ease-out;
+    animation: fadeInUp .5s ease-out;
     position: relative;
-    box-shadow: 0 25px 80px rgba(0,0,0,0.5), 0 0 40px rgba(201,162,75,0.05);
+    box-shadow: none;
 }
 .login-card::before {
     content: '';
     position: absolute;
-    top: -1px;
-    left: 20%;
-    right: 20%;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    top: -1px; left: 50%;
+    transform: translateX(-50%);
+    width: 56px; height: 1px;
+    background: var(--gold);
 }
-.login-card::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 20%;
-    right: 20%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
-}
+.login-card::after { display: none; }
 .login-title {
-    font-size: 32px;
-    font-weight: 300;
-    background: linear-gradient(135deg, var(--cream) 0%, var(--gold-light) 50%, var(--gold) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 7px;
-    animation: fadeInUp 1s ease-out;
+    font-family: var(--serif);
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--cream);
+    -webkit-text-fill-color: var(--cream);
+    background: none;
+    letter-spacing: 0.32em;
+    text-indent: 0.32em;
 }
 .login-subtitle {
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--gold) !important;
-    margin-top: 20px;
-    letter-spacing: 4px;
+    margin-top: 16px;
+    letter-spacing: 0.32em;
+    text-indent: 0.32em;
     text-transform: uppercase;
-    animation: fadeInUp 1.2s ease-out;
-    opacity: 0.8;
+    opacity: 0.9;
 }
 
-/* 헤더 - 럭셔리 */
+/* ───────── 메인 헤더 ───────── */
 .main-header {
     text-align: center;
-    padding: 80px 20px 60px;
-    margin-bottom: 50px;
-    border-bottom: 1px solid var(--line);
-    animation: fadeInUp 0.6s ease-out;
-    position: relative;
-    background: linear-gradient(180deg, rgba(201,162,75,0.02) 0%, transparent 100%);
+    padding: 72px 20px 56px;
+    margin-bottom: 48px;
+    border-bottom: 1px solid var(--line2);
+    animation: fadeInUp .45s ease-out;
+    background: none;
 }
-.main-header::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 10%;
-    right: 10%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--gold), transparent);
-}
+.main-header::after { display: none; }
 .main-header-brand {
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--gold) !important;
-    letter-spacing: 10px;
+    letter-spacing: 0.42em;
+    text-indent: 0.42em;
     text-transform: uppercase;
-    animation: fadeInUp 0.8s ease-out;
-    text-shadow: 0 0 20px rgba(201,162,75,0.3);
+    text-shadow: none;
 }
 .main-header-title {
-    font-size: 42px;
-    font-weight: 200;
-    background: linear-gradient(135deg, var(--cream) 0%, var(--gold-light) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 8px;
-    margin-top: 24px;
-    animation: fadeInUp 1s ease-out;
+    font-family: var(--serif);
+    font-size: 44px;
+    font-weight: 600;
+    color: var(--cream);
+    -webkit-text-fill-color: var(--cream);
+    background: none;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
+    margin-top: 20px;
 }
 .header-tagline {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text2) !important;
-    margin-top: 24px;
-    letter-spacing: 3px;
-    animation: fadeInUp 1.2s ease-out;
+    margin-top: 20px;
+    letter-spacing: 0.02em;
 }
 
-/* Expander + 애니메이션 */
-.stExpander {
+/* ───────── Expander · Progress · 탭 · 알림 ───────── */
+.stExpander, [data-testid="stExpander"] {
     background: var(--card) !important;
-    border: 0.5px solid var(--line2) !important;
-    border-radius: 12px !important;
-    animation: fadeInUp 0.4s ease-out;
-    transition: border-color 0.3s ease;
+    border: 1px solid var(--line2) !important;
+    border-radius: 10px !important;
+    animation: fadeInUp .3s ease-out;
+    transition: border-color .2s ease;
 }
-.stExpander:hover {
-    border-color: var(--gold) !important;
+.stExpander:hover, [data-testid="stExpander"]:hover { border-color: var(--line) !important; }
+
+.stProgress > div > div {
+    background: rgba(255,255,255,0.06) !important;
+    height: 2px !important;
+    border-radius: 1px !important;
+    border: none;
 }
 .stProgress > div > div > div {
-    background: linear-gradient(90deg, var(--gold-dark), var(--gold), var(--gold-light), var(--gold), var(--gold-dark)) !important;
-    background-size: 300% 100%;
-    animation: goldShine 3s ease infinite;
-    border-radius: 4px;
-    box-shadow: 0 0 15px rgba(201,162,75,0.4);
-}
-.stProgress > div > div {
-    background: rgba(20,20,20,0.8);
-    border-radius: 4px;
-    border: 1px solid var(--line);
+    background: var(--gold) !important;
+    box-shadow: none !important;
+    height: 2px !important;
+    animation: none;
+    border-radius: 1px;
 }
 
-/* 라디오 & 탭 */
-.stRadio > div { background: transparent; border: 1px solid var(--line); padding: 16px; }
-.stTabs [data-baseweb="tab-list"] { background: transparent; border-bottom: 1px solid var(--line); }
+.stRadio > div { background: transparent; border: none; padding: 8px 0; }
+.stTabs [data-baseweb="tab-list"] { background: transparent; border-bottom: 1px solid var(--line2); }
 .stTabs [aria-selected="true"] {
     background: transparent !important;
-    color: var(--gold) !important;
+    color: var(--cream) !important;
     border-bottom: 2px solid var(--gold) !important;
 }
 
-/* 알림 */
-.stSuccess > div { background: rgba(111,168,111,0.1) !important; border: 0.5px solid rgba(111,168,111,0.3) !important; border-radius: 10px; }
-.stWarning > div { background: rgba(224,192,116,0.1) !important; border: 0.5px solid rgba(224,192,116,0.3) !important; border-radius: 10px; }
-.stError > div { background: rgba(201,122,111,0.1) !important; border: 0.5px solid rgba(201,122,111,0.3) !important; border-radius: 10px; }
-.stInfo > div { background: rgba(201,162,75,0.08) !important; border: 0.5px solid var(--line) !important; border-radius: 10px; }
+[data-testid="stAlert"], .stAlert {
+    background: var(--card) !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 10px !important;
+}
+[data-testid="stAlert"] p, [data-testid="stAlert"] div { color: var(--text) !important; }
+.stSuccess > div { background: rgba(124,155,124,0.07) !important; border: 1px solid rgba(124,155,124,0.3) !important; border-radius: 10px; }
+.stWarning > div { background: rgba(194,170,126,0.07) !important; border: 1px solid rgba(194,170,126,0.3) !important; border-radius: 10px; }
+.stError > div { background: rgba(179,118,108,0.07) !important; border: 1px solid rgba(179,118,108,0.3) !important; border-radius: 10px; }
+.stInfo > div { background: var(--card) !important; border: 1px solid var(--line2) !important; border-radius: 10px; }
+
+/* 파일 업로더 */
+[data-testid="stFileUploader"] section {
+    background: var(--card) !important;
+    border: 1px dashed rgba(169,142,95,0.35) !important;
+    border-radius: 10px !important;
+}
+[data-testid="stFileUploader"] section span,
+[data-testid="stFileUploader"] section small { color: var(--text2) !important; }
+[data-testid="stFileUploader"] section button {
+    background: transparent !important;
+    border: 1px solid var(--line) !important;
+    color: var(--text) !important;
+    border-radius: 7px !important;
+}
+
+/* 체크박스/라디오 */
+input[type="checkbox"], input[type="radio"] { accent-color: #A98E5F !important; }
 
 /* 스크롤바 */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--dark); }
-::-webkit-scrollbar-thumb { background: var(--gold-dark); }
-
-/* 다운로드 버튼 - 럭셔리 골드 */
-.stDownloadButton button {
-    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 50%, var(--gold) 100%) !important;
-    background-size: 200% 100%;
-    color: var(--dark) !important;
-    border: none !important;
-    border-radius: 12px;
-    font-weight: 600;
-    letter-spacing: 1.5px;
-    box-shadow: 0 4px 20px rgba(201,162,75,0.3);
-    transition: all 0.4s ease;
-    text-shadow: 0 1px 1px rgba(255,255,255,0.2);
-}
-.stDownloadButton button:hover {
-    background-position: 100% 0 !important;
-    box-shadow: 0 8px 35px rgba(201,162,75,0.5);
-    transform: translateY(-2px);
-}
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(169,142,95,0.45); }
 
 /* 구분선 */
-hr { border: none; height: 1px; background: var(--line); margin: 40px 0; }
+hr { border: none; height: 1px; background: var(--line2); margin: 38px 0; }
 
-/* 표지 미리보기 - 실제 책처럼 */
+/* ───────── 표지 미리보기 — 실제 책 질감은 유지 ───────── */
 .book-wrapper {
     perspective: 1000px;
     display: flex;
     justify-content: center;
-    padding: 30px;
-    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-    border-radius: 8px;
+    padding: 34px;
+    background: #14130F;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
 }
 .ebook-cover {
-    font-family: 'Pretendard', sans-serif !important;
+    font-family: var(--sans) !important;
     box-shadow:
-        0 0 5px rgba(0,0,0,0.3),
-        5px 5px 15px rgba(0,0,0,0.4),
-        10px 10px 30px rgba(0,0,0,0.3),
-        15px 15px 50px rgba(0,0,0,0.2),
+        0 1px 3px rgba(0,0,0,0.4),
+        8px 10px 30px rgba(0,0,0,0.45),
         inset -3px 0 10px rgba(0,0,0,0.2);
     transform: rotateY(-3deg);
     border-radius: 0 3px 3px 0;
@@ -847,9 +821,7 @@ hr { border: none; height: 1px; background: var(--line); margin: 40px 0; }
 .ebook-cover::before {
     content: '';
     position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
+    left: 0; top: 0; bottom: 0;
     width: 25px;
     background: linear-gradient(90deg,
         rgba(0,0,0,0.4) 0%,
@@ -862,9 +834,7 @@ hr { border: none; height: 1px; background: var(--line); margin: 40px 0; }
 .ebook-cover::after {
     content: '';
     position: absolute;
-    right: 0;
-    top: 2px;
-    bottom: 2px;
+    right: 0; top: 2px; bottom: 2px;
     width: 8px;
     background: linear-gradient(90deg,
         rgba(255,255,255,0.03) 0%,
@@ -876,100 +846,27 @@ hr { border: none; height: 1px; background: var(--line); margin: 40px 0; }
     -webkit-text-fill-color: inherit !important;
 }
 
-/* ============================================
-   입력 필드 텍스트 색상 - 최우선 적용
-   ============================================ */
-
-/* 모든 입력 필드 - 흰 배경 + 검은 글씨 */
-.stTextInput input,
-.stTextArea textarea,
-.stNumberInput input,
-[data-testid="stTextInput"] input,
-[data-testid="stTextArea"] textarea,
-[data-testid="stNumberInput"] input {
-    background: #ffffff !important;
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    -webkit-text-fill-color: #000000 !important;
-    caret-color: #000000 !important;
-}
-
-/* Placeholder 색상 */
-input::placeholder,
-textarea::placeholder {
-    color: #888888 !important;
-    -webkit-text-fill-color: #888888 !important;
-}
-
-/* 셀렉트박스 - 선택된 값 (어두운 배경에 흰 글씨) */
-.stSelectbox [data-baseweb="select"] > div,
-.stSelectbox [data-baseweb="select"] span,
-.stSelectbox > div > div > div {
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
-}
-
-/* ============================================
-   드롭다운/팝오버 - 검은 글씨 (흰 배경)
-   ============================================ */
-[data-baseweb="popover"],
-[data-baseweb="popover"] *,
-[data-baseweb="menu"],
-[data-baseweb="menu"] *,
-[data-baseweb="list"],
-[data-baseweb="list"] *,
-[role="listbox"],
-[role="listbox"] *,
-[role="option"],
-[role="option"] *,
-.stSelectbox ul,
-.stSelectbox ul *,
-.stSelectbox li,
-.stSelectbox li * {
-    background: #ffffff !important;
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    -webkit-text-fill-color: #000000 !important;
-}
-
-/* 드롭다운 옵션 호버 */
-[role="option"]:hover,
-[data-baseweb="menu"] li:hover,
-.stSelectbox li:hover {
-    background: #f0f0f0 !important;
-    background-color: #f0f0f0 !important;
-}
-
-/* select 요소 */
-select,
-select option {
-    color: #000000 !important;
-    background: #ffffff !important;
-}
-
-/* Expander 스타일 정리 */
+/* ───────── 기능성 규칙 (유지) ───────── */
+/* Expander 헤더의 영어 잔여 텍스트 숨김 */
 .stExpander details summary {
-    background: var(--card) !important;
+    background: transparent !important;
     overflow: hidden !important;
 }
-/* 모든 텍스트 숨기기 (keyboard_arrow 등 영어 텍스트 포함) */
 .stExpander details summary * {
     font-size: 0 !important;
     color: transparent !important;
     -webkit-text-fill-color: transparent !important;
 }
-/* 한국어 제목만 보이게 */
 .stExpander details summary p {
     font-size: 15px !important;
     color: var(--text) !important;
     -webkit-text-fill-color: var(--text) !important;
 }
-/* 화살표 아이콘만 보이게 */
 .stExpander details summary svg {
-    width: 20px !important;
-    height: 20px !important;
-    color: var(--gold) !important;
-    fill: var(--gold) !important;
+    width: 18px !important;
+    height: 18px !important;
+    color: var(--text2) !important;
+    fill: var(--text2) !important;
 }
 
 /* 버튼 앞 불필요한 라벨 숨기기 */
@@ -979,9 +876,11 @@ select option {
 .stExpander .stButton > div:first-child > p {
     display: none !important;
 }
-/* 링크버튼 라벨 숨기기 */
-.stLinkButton > div:first-child > p {
-    display: none !important;
+.stLinkButton > div:first-child > p { display: none !important; }
+
+/* 본문 미리보기(책 페이지)는 종이 흰색 유지 */
+.content-preview-box, .content-preview-box * {
+    background-color: #ffffff;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1168,10 +1067,50 @@ with st.sidebar:
             st.session_state['current_page'] = sidebar_mapping[i]
             st.rerun()
 
+    # ── 프로젝트 저장/복원 ──
+    # Streamlit Cloud는 새로고침/절전 시 세션이 사라지므로 수시 저장 권장
+    st.markdown("---")
+    st.markdown("### 💾 작업 저장/복원")
+    st.caption("새로고침하면 작업이 사라질 수 있어요. 수시로 저장하세요!")
+
+    _SAVE_KEYS = ['topic', 'target_persona', 'pain_points', 'outline', 'chapters',
+                  'book_title', 'subtitle', 'book_concept', 'author_name',
+                  'interview_data', 'temp_interview', 'interview_completed',
+                  'interview_step', 'current_page',
+                  '_prologue_cache', '_prologue_cache_key',
+                  '_epilogue_cache', '_epilogue_cache_key']
+    try:
+        _proj = {k: st.session_state.get(k) for k in _SAVE_KEYS if k in st.session_state}
+        _proj_json = json.dumps(_proj, ensure_ascii=False, indent=2, default=str)
+        _fname = (st.session_state.get('book_title') or st.session_state.get('topic') or 'writey_project').strip()[:30]
+        st.download_button("💾 작업 저장 (JSON)", _proj_json,
+                           file_name=f"{_fname}.json", mime="application/json",
+                           use_container_width=True, key="proj_save")
+    except Exception:
+        st.caption("⚠️ 저장 파일 생성 실패")
+
+    _uploaded_proj = st.file_uploader("저장 파일 불러오기", type=['json'], key="proj_load")
+    if _uploaded_proj is not None and not st.session_state.get('_proj_restored'):
+        try:
+            _data = json.loads(_uploaded_proj.read().decode('utf-8'))
+            if not isinstance(_data, dict) or 'chapters' not in _data:
+                st.error("올바른 저장 파일이 아닙니다")
+            else:
+                for k in _SAVE_KEYS:
+                    if k in _data:
+                        st.session_state[k] = _data[k]
+                st.session_state['_proj_restored'] = True
+                st.success("✅ 프로젝트 복원 완료!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"불러오기 실패: {str(e)[:50]}")
+    if _uploaded_proj is None and st.session_state.get('_proj_restored'):
+        st.session_state['_proj_restored'] = False
+
     # 사이드바 하단 제작자 정보
     st.markdown("---")
     st.markdown("""
-    <div style="text-align:center; padding:10px 0; color:#C9A24B !important; font-size:12px;">
+    <div style="text-align:center; padding:10px 0; color:#A98E5F !important; font-size:12px;">
         <strong>CASHMAKER</strong><br>
         <span style="color:#ffffff !important;">제작: 남현우 작가</span>
     </div>
@@ -1268,15 +1207,28 @@ def ask_ai(prompt, temp=0.7, ensure_quality=False):
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model=model,
-            max_tokens=8000,
-            temperature=temp,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return message.content[0].text
+        # 일시적 오류(과부하 529, 서버 오류, 연결 끊김)는 최대 2회 자동 재시도
+        for _attempt in range(3):
+            try:
+                message = client.messages.create(
+                    model=model,
+                    max_tokens=8000,
+                    temperature=temp,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                return message.content[0].text
+            except (anthropic.AuthenticationError, anthropic.RateLimitError, anthropic.BadRequestError):
+                raise  # 재시도 무의미한 오류는 즉시 처리
+            except Exception as _e:
+                _msg = str(_e).lower()
+                _retryable = any(k in _msg for k in ['overloaded', '529', '500', '503', 'internal server', 'connection', 'timeout', 'timed out'])
+                if _retryable and _attempt < 2:
+                    import time as _time
+                    _time.sleep(4 * (_attempt + 1))  # 4초, 8초 대기 후 재시도
+                    continue
+                raise
     except anthropic.AuthenticationError:
         st.error("API 키가 유효하지 않습니다. Claude API 키를 확인해주세요.")
         return None
@@ -1428,230 +1380,6 @@ def _wrap_title_lines(title, max_chars=7, max_lines=3):
     return lines[:max_lines]
 
 
-import tempfile as _tempfile
-import subprocess as _subprocess
-
-# 표지용 한글 폰트 캐시 디렉터리
-_KR_FONT_DIR = os.path.join(_tempfile.gettempdir(), "cashmaker_fonts")
-_KR_FONT_CACHE = {}
-
-# 한글 폰트 다운로드 후보(여러 미러). 환경에 설치된 폰트가 없을 때 사용.
-_KR_FONT_SOURCES = {
-    "NanumMyeongjo-Bold.ttf": [
-        "https://github.com/google/fonts/raw/main/ofl/nanummyeongjo/NanumMyeongjo-Bold.ttf",
-        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanummyeongjo/NanumMyeongjo-Bold.ttf",
-        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanummyeongjo/NanumMyeongjo-Bold.ttf",
-    ],
-    "NanumMyeongjo-Regular.ttf": [
-        "https://github.com/google/fonts/raw/main/ofl/nanummyeongjo/NanumMyeongjo-Regular.ttf",
-        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanummyeongjo/NanumMyeongjo-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanummyeongjo/NanumMyeongjo-Regular.ttf",
-    ],
-    "NanumGothic-Bold.ttf": [
-        "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf",
-        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Bold.ttf",
-        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Bold.ttf",
-    ],
-    "NanumGothic-Regular.ttf": [
-        "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
-        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
-        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Regular.ttf",
-    ],
-}
-
-
-def _fc_korean_fonts():
-    """fontconfig(fc-list)로 시스템에 설치된 한글 폰트 경로를 찾는다."""
-    try:
-        out = _subprocess.run(
-            ["fc-list", ":lang=ko", "file"],
-            capture_output=True, text=True, timeout=5
-        ).stdout
-        paths = []
-        for line in out.splitlines():
-            p = line.split(":")[0].strip()
-            if p and os.path.exists(p):
-                paths.append(p)
-        # 명조(serif) 계열을 앞쪽에 배치
-        paths.sort(key=lambda p: (0 if ("Myeongjo" in p or "Serif" in p or "Batang" in p) else 1))
-        return paths
-    except Exception:
-        return []
-
-
-def _download_kr_font(filename):
-    """한글 폰트를 캐시 디렉터리에 내려받고 경로를 반환. 실패 시 None."""
-    try:
-        os.makedirs(_KR_FONT_DIR, exist_ok=True)
-    except Exception:
-        return None
-    dest = os.path.join(_KR_FONT_DIR, filename)
-    if os.path.exists(dest) and os.path.getsize(dest) > 10000:
-        return dest
-    for url in _KR_FONT_SOURCES.get(filename, []):
-        try:
-            r = requests.get(url, timeout=15)
-            if r.status_code == 200 and len(r.content) > 10000:
-                with open(dest, "wb") as f:
-                    f.write(r.content)
-                return dest
-        except Exception:
-            continue
-    return None
-
-
-def _kr_font_path(serif=True):
-    """사용 가능한 한글 폰트 경로 반환: 설치된 폰트 → 다운로드 순."""
-    key = "serif" if serif else "sans"
-    if key in _KR_FONT_CACHE:
-        return _KR_FONT_CACHE[key]
-    # 1) 시스템에 설치된 한글 폰트
-    fc = _fc_korean_fonts()
-    if fc:
-        # serif 요청이면 명조 우선, 없으면 첫 번째
-        pick = fc[0]
-        _KR_FONT_CACHE[key] = pick
-        return pick
-    # 2) 다운로드
-    fname = "NanumMyeongjo-Bold.ttf" if serif else "NanumGothic-Bold.ttf"
-    p = _download_kr_font(fname)
-    _KR_FONT_CACHE[key] = p
-    return p
-
-
-def _cover_font(candidates, size):
-    """후보 경로들 중 존재하는 폰트를 로드. 없으면 한글 폰트를 자동 확보."""
-    if not PILLOW_AVAILABLE:
-        return None
-    # 1) 명시된 시스템 경로 후보
-    for path, idx in candidates:
-        if path and os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size, index=idx)
-            except Exception:
-                try:
-                    return ImageFont.truetype(path, size)
-                except Exception:
-                    continue
-    # 2) 후보가 명조/serif 계열인지 판별
-    is_serif = any(
-        ("Serif" in p) or ("Myeongjo" in p) or ("batang" in p.lower())
-        for p, _ in candidates
-    )
-    # 3) fontconfig 또는 다운로드로 한글 폰트 확보
-    kr = _kr_font_path(serif=is_serif)
-    if kr:
-        try:
-            return ImageFont.truetype(kr, size)
-        except Exception:
-            pass
-    # 4) 최후의 수단(한글 미지원, 박스로 보일 수 있음)
-    try:
-        return ImageFont.load_default()
-    except Exception:
-        return None
-
-
-def render_cover_png(path, title, subtitle, author, brand):
-    """Pillow로 출판물급 표지 PNG 생성. 성공 시 path 반환, 실패 시 None."""
-    if not PILLOW_AVAILABLE:
-        return None
-    try:
-        W, H = 1240, 1748  # ~150dpi A5
-
-        SERIF = [
-            ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc", 0),
-            ("C:/Windows/Fonts/batang.ttc", 0),
-            ("C:/Windows/Fonts/Batang.ttc", 0),
-            ("/System/Library/Fonts/AppleSDGothicNeo.ttc", 0),
-            ("/usr/share/fonts/truetype/nanum/NanumMyeongjo.ttf", 0),
-        ]
-        SERIF_MED = [
-            ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Medium.ttc", 0),
-            ("C:/Windows/Fonts/batang.ttc", 0),
-            ("/usr/share/fonts/truetype/nanum/NanumMyeongjo.ttf", 0),
-        ]
-        SANS = [
-            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc", 0),
-            ("C:/Windows/Fonts/malgun.ttf", 0),
-            ("/System/Library/Fonts/AppleSDGothicNeo.ttc", 0),
-            ("/usr/share/fonts/truetype/nanum/NanumGothic.ttf", 0),
-        ]
-
-        def wrap(t, mx):
-            words = t.split(); lines, cur = [], ""
-            for w in words:
-                cand = (cur + " " + w).strip()
-                if not cur or len(cand) <= mx:
-                    cur = cand
-                else:
-                    lines.append(cur); cur = w
-            if cur:
-                lines.append(cur)
-            out = []
-            for ln in lines:
-                while len(ln) > mx + 2:
-                    out.append(ln[:mx]); ln = ln[mx:]
-                out.append(ln)
-            return out
-
-        img = Image.new("RGB", (W, H), (16, 14, 11))
-        d = ImageDraw.Draw(img)
-        top, bot = (26, 23, 16), (9, 8, 6)
-        for y in range(H):
-            t = y / H
-            d.line([(0, y), (W, y)], fill=(
-                int(top[0] + (bot[0] - top[0]) * t),
-                int(top[1] + (bot[1] - top[1]) * t),
-                int(top[2] + (bot[2] - top[2]) * t)))
-        GOLD = (196, 154, 74); CREAM = (244, 239, 227)
-        SUBC = (201, 192, 174); AUTHC = (237, 231, 216); DIM = (138, 130, 112)
-
-        d.rectangle([56, 56, W - 56, H - 56], outline=GOLD, width=2)
-        d.rectangle([68, 68, W - 68, H - 68], outline=GOLD, width=1)
-        cx = W / 2
-
-        def centered(y, text, font, fill, tracking=0):
-            if not font or not text:
-                return
-            if tracking <= 0:
-                b = d.textbbox((0, 0), text, font=font)
-                d.text((cx - (b[2] - b[0]) / 2, y), text, font=font, fill=fill)
-                return
-            widths = [d.textbbox((0, 0), ch, font=font)[2] - d.textbbox((0, 0), ch, font=font)[0] for ch in text]
-            total = sum(widths) + tracking * (len(text) - 1)
-            x = cx - total / 2
-            for ch, wch in zip(text, widths):
-                d.text((x, y), ch, font=font, fill=fill); x += wch + tracking
-
-        centered(160, brand or "", _cover_font(SANS, 32), GOLD, tracking=14)
-        d.line([(cx - 46, 232), (cx + 46, 232)], fill=GOLD, width=2)
-
-        t_lines = wrap(title, 9)
-        longest = max((len(l) for l in t_lines), default=4)
-        fs = 116 if longest <= 8 else 98
-        ftitle = _cover_font(SERIF, fs)
-        line_h = int(fs * 1.30)
-        block_h = line_h * len(t_lines)
-        ty = int(H * 0.44 - block_h / 2)
-        for i, ln in enumerate(t_lines):
-            centered(ty + i * line_h, ln, ftitle, CREAM, tracking=2)
-
-        sep_y = ty + block_h + 46
-        d.line([(cx - 70, sep_y), (cx + 70, sep_y)], fill=GOLD, width=2)
-        if subtitle:
-            centered(sep_y + 44, subtitle, _cover_font(SERIF_MED, 40), SUBC, tracking=2)
-
-        d.line([(cx - 30, H - 290), (cx + 30, H - 290)], fill=GOLD, width=1)
-        centered(H - 252, author or "저자", _cover_font(SANS, 42), AUTHC, tracking=8)
-        centered(H - 190, "지음", _cover_font(SANS, 26), DIM, tracking=4)
-
-        img.save(path, "PNG")
-        return path
-    except Exception:
-        return None
-
-
 def build_cover_svg(template, title, subtitle, author):
     """베스트셀러급 고급 표지 SVG 생성 (1600x2560, 무손실 벡터)"""
     t_lines = _wrap_title_lines(title, max_chars=7, max_lines=3)
@@ -1740,44 +1468,6 @@ def build_cover_svg(template, title, subtitle, author):
         f'font-size="{fs}" font-weight="{tw}" fill="{ink}" letter-spacing="3">{tspans}</text>'
         f'{sub_svg}{auth_svg}</svg>'
     )
-
-
-def estimate_docx_pages(chapters, outline):
-    """워드(A5) 실제 출력 구조를 그대로 모사한 페이지 수 추정.
-
-    워드는 본문 10.5pt / 줄간격 1.85 / A5 + 소제목마다 새 페이지로 나뉘고,
-    표지·판권·프롤로그·에필로그·저자소개·챕터 오프너가 더해진다.
-    기존의 '글자수//500'은 이 구조를 반영하지 않아 워드 페이지 수와 크게 어긋났다.
-    """
-    import math
-    CPP = 330  # A5 11.5pt/1.85 + 소제목별 페이지 나눔 실측(페이지당 약 320자) 반영
-    FRONT = 2  # 표지 + 판권
-    PROLOGUE = 2
-    EPILOGUE = 2
-    AUTHOR = 1
-
-    pages = 0
-    chapter_with_content = 0
-    for ch in (outline or []):
-        cd = (chapters or {}).get(ch)
-        if not cd:
-            continue
-        sub_pages = 0
-        has_content = False
-        for s in cd.get('subtopics', []):
-            content = cd.get('subtopic_data', {}).get(s, {}).get('content', '')
-            if content:
-                has_content = True
-                chars = len(content.replace(' ', '').replace('\n', ''))
-                sub_pages += max(1, math.ceil(chars / CPP))  # 소제목은 새 페이지에서 시작
-        if has_content:
-            chapter_with_content += 1
-            pages += 1          # 챕터 오프너 페이지
-            pages += sub_pages
-
-    if chapter_with_content == 0:
-        return 0
-    return FRONT + PROLOGUE + pages + EPILOGUE + AUTHOR
 
 
 def extract_video_id(url):
@@ -1900,484 +1590,178 @@ def get_full_content():
                 full += f"\n\n{'='*50}\n{ch}\n{'='*50}{ch_content}"
     return full.strip()
 
-# ==========================================
-# 전자책 워드 디자인 폰트 (출판물 톤)
-# 본문 세리프 = 바탕(모든 Windows 기본), 라틴 = Georgia
-# 디스플레이 산세리프 = 맑은 고딕, 라틴 = Arial
-# ==========================================
-EBOOK_SERIF_KR = '바탕'
-EBOOK_SERIF_LATIN = 'Georgia'
-EBOOK_SANS_KR = '맑은 고딕'
-EBOOK_SANS_LATIN = 'Arial'
-
-# 출판 톤 색상 팔레트
-_INK = (28, 28, 30)      # 본문/제목 (거의 검정)
-_SOFT = (92, 92, 98)     # 부제/캡션
-_FAINT = (165, 165, 170) # 라벨/번호
-_HAIR = (200, 200, 204)  # 가는 선
-_GOLD = (150, 120, 60)   # 차분한 골드 포인트
-
-
 def create_ebook_docx(title, subtitle, author, chapters_data, outline, interview_data=None):
-    """베스트셀러 출판물 스타일 워드 문서 생성 (프리미엄 에디토리얼)."""
+    """베스트셀러 스타일의 전문적인 워드 문서 생성"""
     if not DOCX_AVAILABLE:
         return None, "python-docx 패키지가 필요합니다: pip install python-docx"
 
     try:
-        BRAND = "CASHMAKER"
         doc = Document()
 
-        # 기본 문단 간격 0 (빈 문단이 멋대로 커지는 것 방지)
-        normal = doc.styles['Normal']
-        normal.paragraph_format.space_before = Pt(0)
-        normal.paragraph_format.space_after = Pt(0)
-        normal.paragraph_format.line_spacing = 1.0
+        # 페이지 설정 (A5 크기 - 전자책에 적합)
+        section = doc.sections[0]
+        section.page_width = Cm(14.8)
+        section.page_height = Cm(21)
+        section.left_margin = Cm(2.2)
+        section.right_margin = Cm(2.2)
+        section.top_margin = Cm(2.5)
+        section.bottom_margin = Cm(2.5)
 
-        def _apply_section(sec):
-            sec.page_width = Cm(14.8)
-            sec.page_height = Cm(21)
-            sec.left_margin = Cm(2.0)
-            sec.right_margin = Cm(2.0)
-            sec.top_margin = Cm(2.3)
-            sec.bottom_margin = Cm(2.2)
-
-        _apply_section(doc.sections[0])
-
-        # ── 폰트/런 ──
-        def set_font(run, size, bold=False, color=None, italic=False,
-                     serif=False, track=None):
+        def set_font(run, size, bold=False, color=None, italic=False):
             run.font.size = Pt(size)
-            fam_latin = EBOOK_SERIF_LATIN if serif else EBOOK_SANS_LATIN
-            fam_kr = EBOOK_SERIF_KR if serif else EBOOK_SANS_KR
-            run.font.name = fam_latin
-            rpr = run._element.get_or_add_rPr()
-            rfonts = rpr.find(qn('w:rFonts'))
-            if rfonts is None:
-                rfonts = OxmlElement('w:rFonts')
-                rpr.append(rfonts)
-            rfonts.set(qn('w:ascii'), fam_latin)
-            rfonts.set(qn('w:hAnsi'), fam_latin)
-            rfonts.set(qn('w:eastAsia'), fam_kr)
+            run.font.name = 'Malgun Gothic'
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), '맑은 고딕')
             run.bold = bold
             run.italic = italic
             if color:
                 run.font.color.rgb = RGBColor(*color)
-            if track is not None:
-                sp = OxmlElement('w:spacing')
-                sp.set(qn('w:val'), str(int(track * 20)))
-                rpr.append(sp)
 
-        def vspace(pts):
-            p = doc.add_paragraph()
-            pf = p.paragraph_format
-            pf.space_before = Pt(0); pf.space_after = Pt(0)
-            pf.line_spacing = Pt(pts)
-            return p
+        def add_bookmark(paragraph, bookmark_name):
+            """문단에 북마크 추가"""
+            # 북마크 이름에서 특수문자 제거 (Word 북마크 규칙)
+            clean_name = re.sub(r'[^\w가-힣]', '_', bookmark_name)[:40]
 
-        def track_text(text, n=1):
-            return (" " * n).join(list(str(text)))
+            bookmark_start = OxmlElement('w:bookmarkStart')
+            bookmark_start.set(qn('w:id'), str(hash(clean_name) % 10000))
+            bookmark_start.set(qn('w:name'), clean_name)
 
-        def hairline(align=WD_ALIGN_PARAGRAPH.CENTER, width_cm=None, color=_HAIR,
-                     space_before=0, space_after=12, size=6):
-            p = doc.add_paragraph()
-            p.alignment = align
-            pf = p.paragraph_format
-            pf.space_before = Pt(space_before); pf.space_after = Pt(space_after)
-            if width_cm and align == WD_ALIGN_PARAGRAPH.CENTER:
-                side = (10.8 - width_cm) / 2
-                if side > 0:
-                    pf.left_indent = Cm(side); pf.right_indent = Cm(side)
-            pPr = p._p.get_or_add_pPr()
-            pbdr = OxmlElement('w:pBdr')
-            bottom = OxmlElement('w:bottom')
-            bottom.set(qn('w:val'), 'single')
-            bottom.set(qn('w:sz'), str(size))
-            bottom.set(qn('w:space'), '1')
-            _col = color if isinstance(color, str) else '{:02X}{:02X}{:02X}'.format(*color)
-            bottom.set(qn('w:color'), _col)
-            pbdr.append(bottom)
-            pPr.append(pbdr)
-            return p
+            bookmark_end = OxmlElement('w:bookmarkEnd')
+            bookmark_end.set(qn('w:id'), str(hash(clean_name) % 10000))
 
-        def ornament(glyph="✦", color=_FAINT, size=11, space=22):
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.paragraph_format.space_before = Pt(space)
-            p.paragraph_format.space_after = Pt(space)
-            set_font(p.add_run(glyph), size, serif=False, color=color)
-            return p
+            paragraph._p.insert(0, bookmark_start)
+            paragraph._p.append(bookmark_end)
+            return clean_name
 
-        def _shade_para(p, hex_fill):
-            """문단 배경색 칠하기."""
-            pPr = p._p.get_or_add_pPr()
-            shd = OxmlElement('w:shd')
-            shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), hex_fill)
-            pPr.append(shd)
+        def add_hyperlink(paragraph, text, bookmark_name, font_size=10, bold=False, color=(70, 70, 70)):
+            """북마크로 연결되는 하이퍼링크 추가"""
+            # 북마크 이름 정리
+            clean_name = re.sub(r'[^\w가-힣]', '_', bookmark_name)[:40]
 
-        def _box_border(p, color_hex, sides=('top', 'bottom', 'left', 'right'), sz=6):
-            """문단 사면(또는 일부) 테두리 — 박스 효과."""
-            pPr = p._p.get_or_add_pPr()
-            pbdr = OxmlElement('w:pBdr')
-            for s in sides:
-                el = OxmlElement(f'w:{s}')
-                el.set(qn('w:val'), 'single'); el.set(qn('w:sz'), str(sz))
-                el.set(qn('w:space'), '6'); el.set(qn('w:color'), color_hex)
-                pbdr.append(el)
-            pPr.append(pbdr)
+            # 하이퍼링크 요소 생성
+            hyperlink = OxmlElement('w:hyperlink')
+            hyperlink.set(qn('w:anchor'), clean_name)
 
-        def key_summary_box(items, chapter_no):
-            """챕터 끝 '핵심 정리' 요약 박스 (베스트셀러식 정리 코너)."""
-            # 제목 줄 (다크 배경 + 골드 글자)
-            title_p = doc.add_paragraph()
-            title_p.paragraph_format.space_before = Pt(20); title_p.paragraph_format.space_after = Pt(0)
-            title_p.paragraph_format.left_indent = Pt(2); title_p.paragraph_format.right_indent = Pt(2)
-            _shade_para(title_p, '2E2A24')
-            r = title_p.add_run(f"  CHAPTER {chapter_no} · 핵심 정리  ")
-            set_font(r, 11, bold=True, serif=False, color=(201, 162, 75), track=0.5)
-            title_p.paragraph_format.space_after = Pt(0)
-            # 항목들 (연한 배경 박스 안)
-            for k, item in enumerate(items):
-                ip = doc.add_paragraph()
-                ip.paragraph_format.left_indent = Cm(0.2); ip.paragraph_format.right_indent = Cm(0.2)
-                ip.paragraph_format.space_before = Pt(0)
-                ip.paragraph_format.space_after = Pt(2 if k < len(items) - 1 else 0)
-                ip.paragraph_format.line_spacing = 1.5
-                _shade_para(ip, 'F7F4EE')
-                num_r = ip.add_run(f"  {k+1}  ")
-                set_font(num_r, 10.5, bold=True, serif=False, color=(150, 120, 60))
-                txt_r = ip.add_run(item.strip() + "  ")
-                set_font(txt_r, 10.5, serif=True, color=_INK)
-            # 박스 하단 골드 라인
-            hairline(align=WD_ALIGN_PARAGRAPH.LEFT, color=_GOLD, space_before=0, space_after=16, size=10)
+            # 텍스트 실행 요소
+            new_run = OxmlElement('w:r')
+            rPr = OxmlElement('w:rPr')
 
-        def body_paragraph(text, first=False, size=11.5, ls=1.85):
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            set_font(p.add_run(text), size, serif=True, color=_INK)
-            pf = p.paragraph_format
-            pf.line_spacing = ls; pf.space_after = Pt(16)
-            if not first:
-                pf.first_line_indent = Cm(0.6)
-            return p
+            # 폰트 설정
+            rFonts = OxmlElement('w:rFonts')
+            rFonts.set(qn('w:ascii'), 'Malgun Gothic')
+            rFonts.set(qn('w:eastAsia'), '맑은 고딕')
+            rFonts.set(qn('w:hAnsi'), 'Malgun Gothic')
+            rPr.append(rFonts)
 
-        def drop_cap(letter, rest, lines=3, size=11.5, ls=1.85):
-            # 드롭캡 제거: 첫 글자 크기 들쭉날쭉/과대 문제 → 모든 첫 문단을 동일하게 처리
-            return body_paragraph((letter or "") + (rest or ""), first=True, size=size, ls=ls)
+            # 폰트 크기
+            sz = OxmlElement('w:sz')
+            sz.set(qn('w:val'), str(font_size * 2))
+            rPr.append(sz)
+            szCs = OxmlElement('w:szCs')
+            szCs.set(qn('w:val'), str(font_size * 2))
+            rPr.append(szCs)
 
-        def _cell_shade(cell, hex_fill):
-            shd = OxmlElement('w:shd')
-            shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), hex_fill)
-            cell._tc.get_or_add_tcPr().append(shd)
-
-        def _cell_para(cell, text, size, *, serif=True, bold=False, italic=False,
-                       color=(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER,
-                       track=None, space_before=0, space_after=0, ls=1.2, first=True):
-            p = cell.add_paragraph() if not first else cell.paragraphs[0]
-            p.alignment = align
-            pf = p.paragraph_format
-            pf.space_before = Pt(space_before); pf.space_after = Pt(space_after); pf.line_spacing = ls
-            if text:
-                set_font(p.add_run(text), size, serif=serif, bold=bold, italic=italic, color=color, track=track)
-            return p
-
-        def _no_cell_borders(cell):
-            tcPr = cell._tc.get_or_add_tcPr()
-            tcb = OxmlElement('w:tcBorders')
-            for s in ('top', 'bottom', 'left', 'right'):
-                e = OxmlElement(f'w:{s}'); e.set(qn('w:val'), 'nil'); tcb.append(e)
-            tcPr.append(tcb)
-
-        def page_number_footer(section):
-            footer = section.footer
-            footer.is_linked_to_previous = False
-            p = footer.paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run()
-            set_font(run, 9, serif=True, color=_SOFT)
-            f1 = OxmlElement('w:fldChar'); f1.set(qn('w:fldCharType'), 'begin')
-            instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve'); instr.text = 'PAGE'
-            f2 = OxmlElement('w:fldChar'); f2.set(qn('w:fldCharType'), 'end')
-            run._r.append(f1); run._r.append(instr); run._r.append(f2)
-
-        def full_page_cover(title, subtitle, author, brand):
-            """표지: Pillow PNG(출판물급)를 우선 시도, 실패 시 텍스트 표지로 폴백."""
-            # 1) PNG 표지 시도 — 페이지에 꽉 차게 삽입
-            try:
-                import tempfile
-                tmp_png = os.path.join(tempfile.gettempdir(), f"writey_cover_{uuid.uuid4().hex[:8]}.png")
-                made = render_cover_png(tmp_png, title, subtitle, author, brand)
-                if made and os.path.exists(made):
-                    sec0 = doc.sections[0]
-                    # 표지 섹션은 여백 0으로 → 이미지가 페이지 전체를 덮음
-                    old = (sec0.left_margin, sec0.right_margin, sec0.top_margin, sec0.bottom_margin)
-                    sec0.left_margin = Cm(0); sec0.right_margin = Cm(0)
-                    sec0.top_margin = Cm(0); sec0.bottom_margin = Cm(0)
-                    p = doc.add_paragraph()
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.paragraph_format.space_before = Pt(0); p.paragraph_format.space_after = Pt(0)
-                    run = p.add_run()
-                    run.add_picture(made, width=Cm(14.8), height=Cm(21.0))
-                    # 다음 섹션(본문)부터 정상 여백 복원
-                    new_sec = doc.add_section(WD_SECTION.NEW_PAGE)
-                    _apply_section(new_sec)
-                    return
-            except Exception:
-                pass
-
-            # 2) 폴백: 텍스트 기반 표지 (PNG 불가 환경)
-            tbl = doc.add_table(rows=1, cols=1)
-            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-            cell = tbl.rows[0].cells[0]
-            cell.width = Cm(10.8)
-            tbl.rows[0].height = Cm(24.2)
-            tbl.rows[0].height_rule = 2  # EXACT (한 페이지 고정)
-            va = OxmlElement('w:vAlign'); va.set(qn('w:val'), 'center')
-            cell._tc.get_or_add_tcPr().append(va)
-            _cell_shade(cell, '141210')   # 짙은 잉크 배경
-            _no_cell_borders(cell)
-            tcMar = OxmlElement('w:tcMar')
-            for mn, mv in [('top', '420'), ('left', '500'), ('bottom', '420'), ('right', '500')]:
-                m = OxmlElement(f'w:{mn}'); m.set(qn('w:w'), mv); m.set(qn('w:type'), 'dxa'); tcMar.append(m)
-            cell._tc.get_or_add_tcPr().append(tcMar)
-
-            GOLD = (198, 158, 78)
-            CREAM = (245, 240, 230)
-            DIM = (150, 146, 138)
-
-            # 상단 브랜드 라인
-            _cell_para(cell, track_text(brand or "", 3), 9, serif=False, color=GOLD,
-                       space_before=10, space_after=2, first=True)
-            _cell_para(cell, "—— ◆ ——", 9, serif=False, color=GOLD, space_after=64, first=False)
-
-            # 제목 (아주 큰 세리프, 크림색)
-            tlines = _wrap_title_lines(title, max_chars=8, max_lines=3)
-            for line in tlines:
-                _cell_para(cell, line, 38, serif=True, bold=True, color=CREAM,
-                           ls=1.16, space_after=0, first=False)
-
-            # 골드 구분선
-            gline = cell.add_paragraph(); gline.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            gline.paragraph_format.space_before = Pt(20); gline.paragraph_format.space_after = Pt(16)
-            set_font(gline.add_run("⎯⎯⎯⎯⎯⎯"), 13, serif=False, color=GOLD)
-
-            # 부제 (이탤릭, 골드빛 크림) — 단일 단락, 자동 줄바꿈
-            if subtitle:
-                sp = cell.add_paragraph(); sp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                sp.paragraph_format.space_before = Pt(0); sp.paragraph_format.space_after = Pt(56)
-                sp.paragraph_format.line_spacing = 1.45
-                sp.paragraph_format.left_indent = Cm(0.3); sp.paragraph_format.right_indent = Cm(0.3)
-                set_font(sp.add_run(subtitle), 11.5, serif=True, italic=True, color=(214, 200, 168))
-            else:
-                _cell_para(cell, "", 6, first=False, space_after=56)
-
-            # 하단 저자
-            _cell_para(cell, f"{author or '저자'}", 12.5, serif=False, color=CREAM,
-                       space_after=2, first=False)
-            _cell_para(cell, "지음", 9.5, serif=False, color=DIM, space_after=10, first=False)
-            doc.add_page_break()
-
-
-
-        def running_header(section, text):
-            header = section.header
-            header.is_linked_to_previous = False
-            p = header.paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            set_font(p.add_run(track_text(text, 1)), 8, serif=False, color=_FAINT)
-
-        def add_bookmark(paragraph, name):
-            clean = re.sub(r'[^\w가-힣]', '_', name)[:40]
-            bs = OxmlElement('w:bookmarkStart')
-            bs.set(qn('w:id'), str(abs(hash(clean)) % 100000))
-            bs.set(qn('w:name'), clean)
-            be = OxmlElement('w:bookmarkEnd')
-            be.set(qn('w:id'), str(abs(hash(clean)) % 100000))
-            paragraph._p.insert(0, bs)
-            paragraph._p.append(be)
-
-        def add_hyperlink(paragraph, text, name, size=10, bold=False, color=_SOFT, serif=True):
-            clean = re.sub(r'[^\w가-힣]', '_', name)[:40]
-            hl = OxmlElement('w:hyperlink'); hl.set(qn('w:anchor'), clean)
-            r = OxmlElement('w:r'); rPr = OxmlElement('w:rPr')
-            rf = OxmlElement('w:rFonts')
-            fam_latin = EBOOK_SERIF_LATIN if serif else EBOOK_SANS_LATIN
-            fam_kr = EBOOK_SERIF_KR if serif else EBOOK_SANS_KR
-            rf.set(qn('w:ascii'), fam_latin); rf.set(qn('w:hAnsi'), fam_latin); rf.set(qn('w:eastAsia'), fam_kr)
-            rPr.append(rf)
-            sz = OxmlElement('w:sz'); sz.set(qn('w:val'), str(int(size * 2))); rPr.append(sz)
+            # 볼드
             if bold:
-                rPr.append(OxmlElement('w:b'))
-            c = OxmlElement('w:color'); c.set(qn('w:val'), '{:02X}{:02X}{:02X}'.format(*color)); rPr.append(c)
-            r.append(rPr)
-            t = OxmlElement('w:t'); t.text = text; r.append(t)
-            hl.append(r); paragraph._p.append(hl)
+                b = OxmlElement('w:b')
+                rPr.append(b)
 
-        # ── 표 헬퍼 (기존 로직 보존) ──
-        def parse_table_data(text):
-            lines = text.strip().split('\n'); table_data = []
+            # 색상
+            if color:
+                c = OxmlElement('w:color')
+                c.set(qn('w:val'), '{:02X}{:02X}{:02X}'.format(*color))
+                rPr.append(c)
 
-            def _is_separator_cells(cells):
-                # 모든 셀이 ---, :---:, --- 같은 구분선 기호로만 이루어졌으면 구분선 행
-                if not cells:
-                    return False
-                for c in cells:
-                    cc = c.strip()
-                    if cc == '' or re.fullmatch(r'[:\-\s─━]+', cc) is None:
-                        return False
-                return True
+            new_run.append(rPr)
 
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if re.match(r'^\|[\s\-:]+\|$', line):
-                    continue
-                if re.match(r'^[─━┌┬┐├┼┤└┴┘│┃]+$', line):
-                    continue
-                if re.match(r'^[\s\-]+$', line) and len(line.replace(' ', '').replace('-', '')) == 0:
-                    continue
-                if line.startswith('|') and line.endswith('|'):
-                    cells = [c.strip() for c in line.split('|')]; cells = [c for c in cells if c]
-                    if cells and not _is_separator_cells(cells):
-                        table_data.append(cells)
-                elif '|' in line and not line.startswith('|'):
-                    cells = [c.strip() for c in line.split('|')]; cells = [c for c in cells if c]
-                    if cells and not _is_separator_cells(cells):
-                        table_data.append(cells)
-                elif '\t' in line:
-                    cells = [c.strip() for c in line.split('\t')]; cells = [c for c in cells if c]
-                    if len(cells) >= 2 and not _is_separator_cells(cells):
-                        table_data.append(cells)
-                elif ':' in line and not line.startswith('http'):
-                    parts = line.split(':', 1)
-                    if len(parts) == 2 and len(parts[0]) < 30:
-                        table_data.append([parts[0].strip(), parts[1].strip()])
-            return table_data
+            # 텍스트
+            text_elem = OxmlElement('w:t')
+            text_elem.text = text
+            new_run.append(text_elem)
 
-        def add_premium_table(table_data):
-            if not table_data or len(table_data) < 1:
-                return None
-            rows = len(table_data); cols = max(len(r) for r in table_data)
-            is_comp = cols == 2 and rows >= 2
-            table = doc.add_table(rows=rows, cols=cols)
-            table.alignment = WD_TABLE_ALIGNMENT.CENTER
-            table.autofit = False
-            for ci in range(cols):
-                for row in table.rows:
-                    if ci < len(row.cells):
-                        width = (Cm(3) if ci == 0 else Cm(7.8)) if is_comp else Cm(10.8 / cols)
-                        row.cells[ci].width = width
-            for i, row_data in enumerate(table_data):
-                row = table.rows[i]; row.height = Cm(0.95)
-                for j, txt in enumerate(row_data):
-                    if j < cols:
-                        cell = row.cells[j]; cell.text = ''; para = cell.paragraphs[0]
-                        if i == 0:
-                            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            set_font(para.add_run(str(txt)), 9, bold=True, color=(255, 255, 255), serif=False)
-                            shd = OxmlElement('w:shd'); shd.set(qn('w:fill'), '2E2A24')
-                            cell._tc.get_or_add_tcPr().append(shd)
-                        elif is_comp and j == 0:
-                            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            set_font(para.add_run(str(txt)), 9, bold=True, color=(60, 50, 35), serif=False)
-                            shd = OxmlElement('w:shd'); shd.set(qn('w:fill'), 'F5F1E8')
-                            cell._tc.get_or_add_tcPr().append(shd)
-                        else:
-                            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                            para.paragraph_format.left_indent = Pt(6)
-                            set_font(para.add_run(str(txt)), 9, color=(60, 60, 60), serif=True)
-                            if i % 2 == 0:
-                                shd = OxmlElement('w:shd'); shd.set(qn('w:fill'), 'FAF8F3')
-                                cell._tc.get_or_add_tcPr().append(shd)
-                        tcPr = cell._tc.get_or_add_tcPr()
-                        tcMar = OxmlElement('w:tcMar')
-                        for mn, mv in [('top', '70'), ('left', '110'), ('bottom', '70'), ('right', '110')]:
-                            m = OxmlElement(f'w:{mn}'); m.set(qn('w:w'), mv); m.set(qn('w:type'), 'dxa'); tcMar.append(m)
-                        tcPr.append(tcMar)
-                        va = OxmlElement('w:vAlign'); va.set(qn('w:val'), 'center'); tcPr.append(va)
-            tbl = table._tbl
-            tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
-            tblBorders = OxmlElement('w:tblBorders')
-            for bn in ['top', 'bottom']:
-                b = OxmlElement(f'w:{bn}'); b.set(qn('w:val'), 'single'); b.set(qn('w:sz'), '8'); b.set(qn('w:color'), '2E2A24'); tblBorders.append(b)
-            for bn in ['left', 'right']:
-                b = OxmlElement(f'w:{bn}'); b.set(qn('w:val'), 'nil'); tblBorders.append(b)
-            for bn in ['insideH', 'insideV']:
-                b = OxmlElement(f'w:{bn}'); b.set(qn('w:val'), 'single'); b.set(qn('w:sz'), '4'); b.set(qn('w:color'), 'E5E0D5'); tblBorders.append(b)
-            tblPr.append(tblBorders)
-            sp = doc.add_paragraph(); sp.paragraph_format.space_after = Pt(14)
-            return table
+            hyperlink.append(new_run)
+            paragraph._p.append(hyperlink)
 
-        def process_content_with_tables(text):
-            blocks = []; current = []; tbuf = []
-            lines = text.split('\n'); i = 0
+            return hyperlink
 
-            def is_start(line, nxt=None):
-                s = line.strip()
-                if s.startswith('|') and s.endswith('|') and s.count('|') >= 2:
-                    return True
-                if '|' in s and len(s.split('|')) >= 2:
-                    if any(p.strip() and not re.match(r'^[\s\-:]+$', p) for p in s.split('|')):
-                        return True
-                if nxt and ':' in s and ':' in nxt:
-                    if len(s.split(':')[0].strip()) < 30 and len(nxt.split(':')[0].strip()) < 30:
-                        return True
-                return False
+        # ══════════════════════════════════════════════════════════════
+        # 표지 페이지 (미니멀 고급 스타일)
+        # ══════════════════════════════════════════════════════════════
+        for _ in range(8):
+            doc.add_paragraph()
 
-            def is_cont(line):
-                s = line.strip()
-                if not s:
-                    return False
-                if s.startswith('|') and s.endswith('|'):
-                    return True
-                if re.match(r'^\|[\s\-:]+\|$', s):
-                    return True
-                if '|' in s:
-                    return True
-                if ':' in s and len(s.split(':')[0].strip()) < 30:
-                    return True
-                return False
+        # 메인 타이틀
+        title_para = doc.add_paragraph()
+        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_para.add_run(title)
+        set_font(title_run, 28, bold=True)
+        title_para.paragraph_format.space_after = Pt(16)
 
-            while i < len(lines):
-                line = lines[i]
-                nxt = lines[i + 1] if i + 1 < len(lines) else None
-                if is_start(line, nxt):
-                    if current:
-                        blocks.append(('text', '\n'.join(current))); current = []
-                    tbuf = [line]; i += 1
-                    while i < len(lines) and is_cont(lines[i]):
-                        tbuf.append(lines[i]); i += 1
-                    blocks.append(('table', '\n'.join(tbuf)))
-                else:
-                    current.append(line); i += 1
-            if current:
-                blocks.append(('text', '\n'.join(current)))
-            return blocks
+        # 부제
+        if subtitle:
+            subtitle_para = doc.add_paragraph()
+            subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            sub_run = subtitle_para.add_run(subtitle)
+            set_font(sub_run, 12, color=(80, 80, 80))
+            subtitle_para.paragraph_format.space_before = Pt(8)
 
-        # ════════════════════════ 표지 (풀 페이지 짙은 배경) ════════════════════════
-        full_page_cover(title, subtitle, author, BRAND)
+        # 저자명
+        for _ in range(10):
+            doc.add_paragraph()
+        author_para = doc.add_paragraph()
+        author_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        author_run = author_para.add_run(author if author else "저자")
+        set_font(author_run, 13)
 
-        # ════════════════════════ 판권 ════════════════════════
-        vspace(330)
-        cr = [title, "", f"지은이  {author or '저자'}", f"펴낸이  {BRAND}", "",
-              "이 책의 저작권은 저자에게 있습니다.", "무단 전재와 복제를 금합니다."]
-        for i, line in enumerate(cr):
-            cp = doc.add_paragraph(); cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            if line:
-                set_font(cp.add_run(line), 11 if i == 0 else 9, bold=(i == 0),
-                         color=_INK if i == 0 else _SOFT, serif=True)
-            cp.paragraph_format.space_after = Pt(3)
         doc.add_page_break()
 
-        # ════════════════════════ 프롤로그 ════════════════════════
-        vspace(36)
-        pl = doc.add_paragraph(); pl.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(pl.add_run(track_text("PROLOGUE", 2)), 10, serif=False, color=_FAINT)
-        pl.paragraph_format.space_after = Pt(8)
-        hairline(width_cm=1.4, color=_GOLD, space_after=30, size=8)
+        # ══════════════════════════════════════════════════════════════
+        # 판권 페이지
+        # ══════════════════════════════════════════════════════════════
+        for _ in range(18):
+            doc.add_paragraph()
 
-        prologue_text = None
-        if interview_data:
+        copyright_lines = [
+            f"{title}",
+            "",
+            f"지은이: {author if author else '저자'}",
+            "",
+            "이 책의 저작권은 저자에게 있습니다.",
+            "무단 전재와 복제를 금합니다."
+        ]
+
+        for line in copyright_lines:
+            cp_para = doc.add_paragraph()
+            cp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if line:
+                cp_run = cp_para.add_run(line)
+                set_font(cp_run, 9, color=(120, 120, 120))
+            cp_para.paragraph_format.space_after = Pt(2)
+
+        doc.add_page_break()
+
+        # ══════════════════════════════════════════════════════════════
+        # 프롤로그 (미니멀 스타일)
+        # ══════════════════════════════════════════════════════════════
+        for _ in range(4):
+            doc.add_paragraph()
+
+        # 프롤로그 제목
+        prologue_title = doc.add_paragraph()
+        prologue_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        pt_run = prologue_title.add_run("Prologue")
+        set_font(pt_run, 14, bold=True)
+        prologue_title.paragraph_format.space_after = Pt(30)
+
+        # 프롤로그 내용 - AI가 인터뷰 내용을 참고해서 자연스럽게 작성
+        # [캐시] 페이지가 갱신될 때마다 재생성하지 않도록 세션에 1회만 생성
+        _pe_cache_key = f"{title}|{interview_data.get('topic', '') if interview_data else ''}"
+        if st.session_state.get('_prologue_cache_key') == _pe_cache_key and st.session_state.get('_prologue_cache'):
+            prologue_text = st.session_state['_prologue_cache']
+            interview_data_for_prologue = None  # 생성 건너뛰기
+        else:
+            prologue_text = None
+            interview_data_for_prologue = interview_data
+        if prologue_text is None and interview_data_for_prologue:
             prologue_prompt = f"""당신은 한국 자기계발 베스트셀러 작가입니다. 독자가 첫 문장에서 "이거 내 얘기야"라고 무릎 치고, 마지막 문장에서 "다음 페이지가 너무 궁금해"라며 책장을 넘기게 만드는 프롤로그를 작성하세요.
 
 [저자 정보 - 참고용, 그대로 복사하지 말 것]
@@ -2447,203 +1831,602 @@ def create_ebook_docx(title, subtitle, author, chapters_data, outline, interview
 ❌ 위에서 내려다보는 어조 (당신은 이래서 안 됩니다 X)
 
 본문 텍스트만 출력하세요. 어떤 마크다운 헤더(#)나 '프롤로그' 라벨도 출력하지 마세요. 첫 문장부터 바로 본문이 시작되어야 합니다."""
-            gen = ask_ai(prologue_prompt, 0.7, ensure_quality=True)
-            if gen:
-                prologue_text = gen
+
+            generated_prologue = ask_ai(prologue_prompt, 0.7, ensure_quality=True)
+            if generated_prologue:
+                prologue_text = generated_prologue
+                st.session_state['_prologue_cache'] = prologue_text
+                st.session_state['_prologue_cache_key'] = _pe_cache_key
+
         if not prologue_text:
-            prologue_text = ("수요일 밤 열한 시였습니다. 또 휴대폰을 들었습니다. 피드 속 친구는 벌써 두 번째 "
-                             "집을 샀다고 했습니다. 저는 통장을 열어 보지도 못했습니다.\n\n"
-                             "그때는 몰랐습니다. 문제는 의지가 아니라 구조였다는 걸요.\n\n"
-                             "어느 날 한 줄의 계산을 마주하고서야 알았습니다. 같은 돈을 벌어도 누구는 쌓고 "
-                             "누구는 흘려보내는 이유가 따로 있다는 것을요.\n\n"
-                             "이 책은 그 단순한 차이를 처음부터 끝까지 풀어냅니다.")
+            prologue_text = """이 책을 쓰게 된 이유는 단순합니다.
+
+제가 직접 경험하고 배운 것들을 나누고 싶었습니다.
+
+처음에는 저도 막막했습니다. 하지만 포기하지 않았고, 결국 방법을 찾았습니다.
+
+이 책은 단순한 이론서가 아닙니다. 직접 해보고, 실패하고, 다시 일어나며 터득한 실전 노하우입니다.
+
+당신도 할 수 있습니다.
+
+자, 이제 시작합니다."""
+
+        # 마크다운 헤더(#, ##, ###) + 굵게(**) + '프롤로그/Prologue' 라벨 모두 제거
+        # AI가 어떤 형태로 라벨을 박든 다 잡아냄
         prologue_text = re.sub(r'^\s*#+\s*(프롤로그|Prologue|들어가며|머리말)\s*\.?\s*$', '', prologue_text, flags=re.MULTILINE | re.IGNORECASE)
+        prologue_text = re.sub(r'^\s*\*+\s*(프롤로그|Prologue|들어가며|머리말)\s*\*+\s*$', '', prologue_text, flags=re.MULTILINE | re.IGNORECASE)
+        prologue_text = re.sub(r'^\s*(프롤로그|Prologue|들어가며|머리말)\s*\.?\s*\n', '', prologue_text, flags=re.IGNORECASE)
+        prologue_text = prologue_text.replace('**프롤로그**', '').replace('**Prologue**', '')
+        # 시작 부분의 빈 줄 제거
         prologue_text = prologue_text.lstrip('\n').strip()
-        paras = [x for x in prologue_text.split('\n\n') if x.strip()]
-        for i, t in enumerate(paras):
-            if i == 0 and len(t.strip()) > 1:
-                drop_cap(t.strip()[0], t.strip()[1:])
-            else:
-                body_paragraph(t.strip(), first=(i == 0))
+
+        # 프롤로그 본문 - 본문과 완전히 동일한 양식 (양쪽 맞춤, 10.5pt, line_spacing 1.85, 들여쓰기)
+        for para_text in prologue_text.split('\n\n'):
+            if para_text.strip():
+                para = doc.add_paragraph()
+                para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY  # 양쪽 맞춤 (본문과 동일)
+                para_run = para.add_run(para_text.strip())
+                set_font(para_run, 10.5, color=(45, 45, 45))  # 본문과 동일한 폰트/색
+                para_format = para.paragraph_format
+                para_format.line_spacing = 1.85  # 본문과 동일한 줄간격
+                para_format.space_after = Pt(14)
+                para_format.first_line_indent = Cm(0.6)  # 본문과 동일한 들여쓰기
+
         doc.add_page_break()
 
-        # ════════════════════════ 목차 ════════════════════════
-        vspace(44)
-        ct = doc.add_paragraph(); ct.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(ct.add_run(track_text("CONTENTS", 4)), 17, serif=True, bold=True, color=_INK)
-        ct.paragraph_format.space_after = Pt(5)
-        cts = doc.add_paragraph(); cts.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(cts.add_run("차 례"), 10, serif=False, color=_FAINT, track=3)
-        cts.paragraph_format.space_after = Pt(12)
-        hairline(width_cm=1.6, color=_GOLD, space_after=34, size=10)
+        # ══════════════════════════════════════════════════════════════
+        # 목차 (프리미엄 미니멀 디자인)
+        # ══════════════════════════════════════════════════════════════
 
-        # 목차 전용 색 (참고 디자인: 보라 박스 + 청록 점선)
-        TOC_PURPLE = '5B2E8C'
-        TOC_PURPLE_RGB = (91, 46, 140)
-        TOC_TEAL = (138, 170, 160)
+        # 상단 여백
+        for _ in range(4):
+            doc.add_paragraph()
 
-        # 분야 라벨(있으면) 추출용
-        field_label = ''
-        if interview_data:
-            field_label = (interview_data.get('field', '') or '').strip()
-
-        # 챕터별 시작 페이지 추정 (앞 구조 페이지 + 누적)
-        import math as _math
-        _CPP = 330
-        page_cursor = 9  # 표지·판권·프롤로그·목차 등 앞부분 근사
-        chapter_start_pages = {}
-        sub_pages_map = {}
-        for cidx, chap in enumerate(outline):
-            chapter_start_pages[cidx] = page_cursor
-            page_cursor += 1  # 챕터 오프너
-            if chap in chapters_data:
-                for sname in chapters_data[chap].get('subtopics', []):
-                    sub_pages_map[(cidx, sname)] = page_cursor
-                    c = chapters_data[chap].get('subtopic_data', {}).get(sname, {}).get('content', '')
-                    chars = len((c or '').replace(' ', '').replace('\n', ''))
-                    page_cursor += max(1, _math.ceil(chars / _CPP))
-
-        def _toc_part_chip(idx, clean):
-            """보라 PART 박스 + 제목을 한 줄 표로 (참고 디자인)."""
-            t = doc.add_table(rows=1, cols=2)
-            t.alignment = WD_TABLE_ALIGNMENT.LEFT
-            t.autofit = False
-            cbox, ctitle = t.rows[0].cells
-            cbox.width = Cm(1.7); ctitle.width = Cm(9.1)
-            # 보라 박스
-            _cell_shade(cbox, TOC_PURPLE)
-            _no_cell_borders(cbox)
-            bp1 = cbox.paragraphs[0]; bp1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            bp1.paragraph_format.space_before = Pt(5); bp1.paragraph_format.space_after = Pt(0); bp1.paragraph_format.line_spacing = 1.0
-            set_font(bp1.add_run(f"PART {idx+1}"), 8, serif=False, bold=True, color=(255, 255, 255), track=0.3)
-            if field_label:
-                bp2 = cbox.add_paragraph(); bp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                bp2.paragraph_format.space_before = Pt(1); bp2.paragraph_format.space_after = Pt(5); bp2.paragraph_format.line_spacing = 1.0
-                set_font(bp2.add_run(field_label[:6]), 10, serif=False, bold=True, color=(255, 255, 255), track=1)
-            else:
-                bp1.paragraph_format.space_after = Pt(5)
-            va = OxmlElement('w:vAlign'); va.set(qn('w:val'), 'center'); cbox._tc.get_or_add_tcPr().append(va)
-            # 제목 셀
-            _no_cell_borders(ctitle)
-            tp = ctitle.paragraphs[0]
-            tp.paragraph_format.left_indent = Cm(0.35)
-            tp.paragraph_format.space_before = Pt(2); tp.paragraph_format.space_after = Pt(0); tp.paragraph_format.line_spacing = 1.2
-            add_hyperlink(tp, clean, f"chapter_{idx+1}", size=15, bold=True, color=_INK, serif=True)
-            va2 = OxmlElement('w:vAlign'); va2.set(qn('w:val'), 'center'); ctitle._tc.get_or_add_tcPr().append(va2)
+        # 목차 제목 (미니멀 타이포그래피)
+        toc_title = doc.add_paragraph()
+        toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        toc_run = toc_title.add_run("CONTENTS")
+        set_font(toc_run, 16, bold=False, color=(40, 40, 40))
+        toc_title.paragraph_format.space_after = Pt(60)
 
         for idx, chapter in enumerate(outline):
-            clean = chapter
-            for pre in [f"PART {idx+1}.", f"PART{idx+1}.", f"PART {idx+1} ", f"{idx+1}.", f"{idx+1})"]:
-                clean = clean.replace(pre, "").strip()
-            if idx > 0:
-                vspace(20)
-            # 청록 점선 (상단)
-            hairline(align=WD_ALIGN_PARAGRAPH.LEFT, color=TOC_TEAL, space_before=0, space_after=8, size=6)
-            # 보라 PART 박스 + 제목
-            _toc_part_chip(idx, clean)
-            # 청록 점선 (하단)
-            hairline(align=WD_ALIGN_PARAGRAPH.LEFT, color=TOC_TEAL, space_before=8, space_after=14, size=6)
-            # 소제목 + 점선 리더 + 페이지 번호
+            # 챕터 제목 정리 (PART X. 등 접두사 제거)
+            clean_chapter = chapter
+            for prefix in [f"PART {idx + 1}.", f"PART{idx + 1}.", f"PART {idx + 1} ", f"PART{idx + 1} ", f"{idx + 1}.", f"{idx + 1})"]:
+                clean_chapter = clean_chapter.replace(prefix, "").strip()
+
+            # ─────────────────────────────────────
+            # 챕터 번호 (큰 숫자)
+            # ─────────────────────────────────────
+            ch_num_para = doc.add_paragraph()
+            ch_num_para.paragraph_format.space_before = Pt(28)
+            ch_num_para.paragraph_format.space_after = Pt(4)
+            ch_num_run = ch_num_para.add_run(f"{idx + 1:02d}")
+            set_font(ch_num_run, 24, bold=False, color=(200, 200, 200))
+
+            # ─────────────────────────────────────
+            # 챕터 제목 (하이퍼링크)
+            # ─────────────────────────────────────
+            ch_title_para = doc.add_paragraph()
+            ch_title_para.paragraph_format.space_after = Pt(14)
+            chapter_bookmark_name = f"chapter_{idx + 1}"
+            add_hyperlink(ch_title_para, clean_chapter, chapter_bookmark_name, font_size=12, bold=True, color=(30, 30, 30))
+
+            # ─────────────────────────────────────
+            # 소제목들 (심플한 리스트)
+            # ─────────────────────────────────────
             if chapter in chapters_data:
-                for sub in chapters_data[chapter].get('subtopics', []):
-                    si = chapters_data[chapter]['subtopics'].index(sub)
-                    pg = sub_pages_map.get((idx, sub), '')
-                    sr = doc.add_paragraph()
-                    sr.paragraph_format.left_indent = Cm(0.3); sr.paragraph_format.space_after = Pt(9)
-                    sr.paragraph_format.line_spacing = 1.3
-                    sr.paragraph_format.tab_stops.add_tab_stop(
-                        Cm(10.6), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
-                    add_hyperlink(sr, sub, f"subtopic_{idx+1}_{si+1}", size=10.5, bold=False, color=(58, 58, 64), serif=True)
-                    # 탭 + 페이지번호
-                    tabrun = sr.add_run(f"\t{pg:03d}" if isinstance(pg, int) else "")
-                    set_font(tabrun, 10, serif=False, color=TOC_PURPLE_RGB)
+                ch_data = chapters_data[chapter]
+                subtopics = ch_data.get('subtopics', [])
+
+                for sub_idx, sub in enumerate(subtopics):
+                    toc_sub = doc.add_paragraph()
+                    toc_sub.paragraph_format.left_indent = Cm(0.3)
+                    toc_sub.paragraph_format.space_after = Pt(6)
+
+                    # 작은 점 불릿
+                    bullet_run = toc_sub.add_run("·  ")
+                    set_font(bullet_run, 10, color=(180, 180, 180))
+
+                    # 소제목 텍스트 (하이퍼링크로 연결)
+                    subtopic_bookmark_name = f"subtopic_{idx + 1}_{sub_idx + 1}"
+                    add_hyperlink(toc_sub, sub, subtopic_bookmark_name, font_size=10, bold=False, color=(80, 80, 80))
+
+        # 하단 여백
+        for _ in range(3):
+            doc.add_paragraph()
+
         doc.add_page_break()
 
-        # ════════════════════════ 본문 (장마다 섹션) ════════════════════════
-        for idx, chapter in enumerate(outline):
-            clean = chapter
-            for pre in [f"PART {idx+1}.", f"PART{idx+1}.", f"PART {idx+1} ", f"{idx+1}.", f"{idx+1})"]:
-                clean = clean.replace(pre, "").strip()
-            sec = doc.add_section(WD_SECTION.NEW_PAGE)
-            _apply_section(sec)
-            sec.different_first_page_header_footer = True
-            running_header(sec, clean)
-            page_number_footer(sec)
+        # ══════════════════════════════════════════════════════════════
+        # 본문 (프리미엄 에디토리얼 스타일)
+        # ══════════════════════════════════════════════════════════════
 
-            vspace(90)
-            lab = doc.add_paragraph(); lab.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            set_font(lab.add_run(track_text("PART", 3)), 10, serif=False, color=_GOLD)
-            lab.paragraph_format.space_after = Pt(4)
-            num = doc.add_paragraph(); num.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            set_font(num.add_run(f"{idx+1:02d}"), 72, serif=True, bold=False, color=(60, 56, 50))
-            num.paragraph_format.space_after = Pt(8)
-            hairline(width_cm=1.8, color=_GOLD, space_after=24, size=10)
-            cn = doc.add_paragraph(); cn.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            add_bookmark(cn, f"chapter_{idx+1}")
-            set_font(cn.add_run(clean), 20, bold=True, color=_INK, serif=True)
-            cn.paragraph_format.line_spacing = 1.3; cn.paragraph_format.space_after = Pt(44)
+        def add_horizontal_line(doc, width_cm=3, color=(220, 220, 220)):
+            """가로 구분선 추가"""
+            line_para = doc.add_paragraph()
+            line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            line_run = line_para.add_run("─" * 12)
+            set_font(line_run, 10, color=color)
+            line_para.paragraph_format.space_before = Pt(20)
+            line_para.paragraph_format.space_after = Pt(20)
+            return line_para
 
-            if chapter not in chapters_data:
-                continue
-            subs = chapters_data[chapter].get('subtopics', [])
-            for si, sub in enumerate(subs):
-                content = chapters_data[chapter].get('subtopic_data', {}).get(sub, {}).get('content', '')
-                if not content:
+        def add_chapter_opener(doc, idx, chapter_title):
+            """챕터 시작 페이지 - 프리미엄 에디토리얼 스타일"""
+            # 상단 넓은 여백 (페이지 중앙 정도에 위치)
+            for _ in range(7):
+                doc.add_paragraph()
+
+            # PART 라벨 (작은 대문자)
+            part_label = doc.add_paragraph()
+            part_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            part_run = part_label.add_run(f"P A R T")
+            set_font(part_run, 9, color=(160, 160, 160))
+            part_label.paragraph_format.space_after = Pt(8)
+
+            # 챕터 번호 (매우 큰 숫자)
+            ch_num_para = doc.add_paragraph()
+            ch_num_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            ch_num_run = ch_num_para.add_run(f"{idx + 1}")
+            set_font(ch_num_run, 48, bold=False, color=(40, 40, 40))
+            ch_num_para.paragraph_format.space_after = Pt(16)
+
+            # 구분선
+            line_para = doc.add_paragraph()
+            line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            line_run = line_para.add_run("───────────")
+            set_font(line_run, 10, color=(200, 200, 200))
+            line_para.paragraph_format.space_after = Pt(20)
+
+            # 챕터 제목
+            ch_name = doc.add_paragraph()
+            ch_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            chn_run = ch_name.add_run(chapter_title)
+            set_font(chn_run, 14, bold=True, color=(30, 30, 30))
+            ch_name.paragraph_format.space_after = Pt(60)
+
+            return ch_name
+
+        def add_subtopic_header(doc, subtopic_text, sub_idx):
+            """소제목 - 베스트셀러 스타일"""
+            # 소제목 전 넓은 여백 (시각적 구분)
+            spacer = doc.add_paragraph()
+            spacer.paragraph_format.space_after = Pt(40)
+
+            # 상단 미니멀 구분선
+            line_para = doc.add_paragraph()
+            line_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            line_run = line_para.add_run("──")
+            set_font(line_run, 10, color=(200, 200, 200))
+            line_para.paragraph_format.space_after = Pt(12)
+
+            # 소제목 텍스트 (대담하고 명확하게)
+            sub_title = doc.add_paragraph()
+            sub_run = sub_title.add_run(subtopic_text)
+            set_font(sub_run, 13, bold=True, color=(25, 25, 25))
+            sub_title.paragraph_format.space_after = Pt(24)
+
+            return sub_title
+
+        def format_body_paragraph(doc, text, is_first=False):
+            """본문 문단 - 베스트셀러 가독성 스타일"""
+            para = doc.add_paragraph()
+            para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+            if is_first and len(text) > 0:
+                # 첫 문단 첫 글자 드롭캡 (세련된 버전)
+                first_char = text[0]
+                rest_text = text[1:]
+
+                first_run = para.add_run(first_char)
+                set_font(first_run, 18, bold=True, color=(40, 40, 40))
+
+                rest_run = para.add_run(rest_text)
+                set_font(rest_run, 10.5, color=(45, 45, 45))
+            else:
+                p_run = para.add_run(text)
+                set_font(p_run, 10.5, color=(45, 45, 45))
+
+            para_format = para.paragraph_format
+            para_format.line_spacing = 1.85  # 베스트셀러 표준 줄간격
+            para_format.space_after = Pt(14)
+            para_format.first_line_indent = Cm(0.6)  # 들여쓰기
+
+            return para
+
+        def is_table_text(text):
+            """텍스트가 표 형식인지 감지"""
+            lines = text.strip().split('\n')
+            if len(lines) < 2:
+                return False
+
+            # 마크다운 테이블 감지: | 로 시작하고 | 로 끝남
+            pipe_lines = sum(1 for line in lines if line.strip().startswith('|') and line.strip().endswith('|'))
+            if pipe_lines >= 2:
+                return True
+
+            # 파이프로 구분된 테이블 (| 가 있지만 시작/끝이 아닐 수 있음)
+            pipe_content_lines = sum(1 for line in lines if '|' in line and len(line.split('|')) >= 2)
+            if pipe_content_lines >= 2:
+                return True
+
+            # 탭 구분 테이블
+            tab_lines = sum(1 for line in lines if '\t' in line)
+            if tab_lines >= 2:
+                return True
+
+            # 콜론 기반 비교 테이블 감지 (Before: xxx / After: xxx)
+            colon_lines = sum(1 for line in lines
+                            if ':' in line
+                            and not line.strip().startswith('http')
+                            and len(line.split(':')[0]) < 30)
+            if colon_lines >= 2 and colon_lines >= len(lines) * 0.6:
+                return True
+
+            return False
+
+        def parse_table_data(text):
+            """표 텍스트를 파싱하여 2D 배열로 변환"""
+            lines = text.strip().split('\n')
+            table_data = []
+
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
-                if si > 0:
-                    doc.add_page_break()
-                # 소제목 번호 칩 (골드 배경 박스)
-                chip = doc.add_paragraph()
-                chip.paragraph_format.space_before = Pt(10); chip.paragraph_format.space_after = Pt(6)
-                _shade_para(chip, '2E2A24')
-                cr = chip.add_run(f"  {idx+1}.{si+1}  ")
-                set_font(cr, 11, bold=True, serif=False, color=(201, 162, 75), track=1)
-                # 소제목 제목 (크고 굵게)
-                ht = doc.add_paragraph()
-                add_bookmark(ht, f"subtopic_{idx+1}_{si+1}")
-                set_font(ht.add_run(sub), 16, bold=True, color=_INK, serif=True)
-                ht.paragraph_format.space_after = Pt(6); ht.paragraph_format.line_spacing = 1.25
-                # 진한 더블 밑줄(챕터 오프너와 확실히 구분)
-                hairline(align=WD_ALIGN_PARAGRAPH.LEFT, color='2E2A24', space_before=0, space_after=2, size=10)
-                hairline(align=WD_ALIGN_PARAGRAPH.LEFT, color=_GOLD, space_before=0, space_after=20, size=4)
 
-                cleaned = clean_content(content, subtopic=sub)
-                first_para_done = False
-                for btype, bcontent in process_content_with_tables(cleaned):
-                    if btype == 'table':
-                        td = parse_table_data(bcontent)
-                        if td and len(td) >= 2:
-                            sp = doc.add_paragraph(); sp.paragraph_format.space_after = Pt(8)
-                            add_premium_table(td)
-                            first_para_done = True
+                # 순수 구분선만 스킵 (실제 내용이 없는 라인)
+                # 마크다운 구분선: |---|---| 또는 |:---:|:---:|
+                if re.match(r'^\|[\s\-:]+\|$', line):
+                    continue
+                # 박스 그리기 문자만 있는 라인
+                if re.match(r'^[─━┌┬┐├┼┤└┴┘│┃]+$', line):
+                    continue
+                # 하이픈만 있는 라인 (--- 또는 - - -)
+                if re.match(r'^[\s\-]+$', line) and len(line.replace(' ', '').replace('-', '')) == 0:
+                    continue
+
+                # 마크다운 테이블 파싱 (| cell | cell |)
+                if line.startswith('|') and line.endswith('|'):
+                    cells = [cell.strip() for cell in line.split('|')]
+                    cells = [c for c in cells if c]  # 빈 셀 제거
+                    if cells:
+                        table_data.append(cells)
+                # 일반 파이프 구분 (cell | cell)
+                elif '|' in line and not line.startswith('|'):
+                    cells = [cell.strip() for cell in line.split('|')]
+                    cells = [c for c in cells if c]
+                    if cells:
+                        table_data.append(cells)
+                # 탭 구분 테이블
+                elif '\t' in line:
+                    cells = [cell.strip() for cell in line.split('\t')]
+                    cells = [c for c in cells if c]
+                    if len(cells) >= 2:
+                        table_data.append(cells)
+                # 콜론 기반 파싱 (Before: xxx) - 단, URL이 아닌 경우
+                elif ':' in line and not line.startswith('http'):
+                    # 첫 번째 콜론으로만 분리
+                    parts = line.split(':', 1)
+                    if len(parts) == 2 and len(parts[0]) < 30:  # 키가 너무 길면 제외
+                        table_data.append([parts[0].strip(), parts[1].strip()])
+
+            return table_data
+
+        def add_premium_table(doc, table_data):
+            """인포그래픽 스타일 테이블 - 시각적 이해도 향상"""
+            if not table_data or len(table_data) < 1:
+                return None
+
+            rows = len(table_data)
+            cols = max(len(row) for row in table_data)
+
+            # 2열 비교 테이블인 경우 (Before/After, 항목/설명 등)
+            is_comparison = cols == 2 and rows >= 2
+
+            # 테이블 생성
+            table = doc.add_table(rows=rows, cols=cols)
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            # 테이블 전체 너비 설정
+            table.autofit = False
+            for col_idx in range(cols):
+                for row in table.rows:
+                    if col_idx < len(row.cells):
+                        if is_comparison:
+                            # 2열 비교: 첫 열 좁게, 둘째 열 넓게
+                            width = Cm(3) if col_idx == 0 else Cm(7)
+                        else:
+                            width = Cm(10 / cols)
+                        row.cells[col_idx].width = width
+
+            # 각 셀 스타일링
+            for i, row_data in enumerate(table_data):
+                row = table.rows[i]
+                row.height = Cm(1.0)  # 행 높이 증가
+
+                for j, cell_text in enumerate(row_data):
+                    if j < cols:
+                        cell = row.cells[j]
+                        cell.text = ''
+
+                        para = cell.paragraphs[0]
+
+                        # 첫 번째 행(헤더) - 진한 배경
+                        if i == 0:
+                            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            run = para.add_run(str(cell_text))
+                            set_font(run, 9, bold=True, color=(255, 255, 255))
+                            # 헤더 배경색 (진한 회색)
+                            shading = OxmlElement('w:shd')
+                            shading.set(qn('w:fill'), '4A4A4A')
+                            cell._tc.get_or_add_tcPr().append(shading)
+
+                        # 첫 번째 열 (라벨/항목) - 2열 비교 테이블
+                        elif is_comparison and j == 0:
+                            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            run = para.add_run(str(cell_text))
+                            set_font(run, 9, bold=True, color=(50, 50, 50))
+                            # 연한 배경
+                            shading = OxmlElement('w:shd')
+                            shading.set(qn('w:fill'), 'F8F8F8')
+                            cell._tc.get_or_add_tcPr().append(shading)
+
+                        # 일반 내용 셀
+                        else:
+                            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                            para.paragraph_format.left_indent = Pt(8)
+                            run = para.add_run(str(cell_text))
+                            set_font(run, 9, color=(60, 60, 60))
+                            # 짝수 행 배경 (줄무늬 효과)
+                            if i % 2 == 0:
+                                shading = OxmlElement('w:shd')
+                                shading.set(qn('w:fill'), 'FAFAFA')
+                                cell._tc.get_or_add_tcPr().append(shading)
+
+                        # 셀 여백 설정
+                        tc = cell._tc
+                        tcPr = tc.get_or_add_tcPr()
+                        tcMar = OxmlElement('w:tcMar')
+                        for margin_name, margin_val in [('top', '80'), ('left', '120'), ('bottom', '80'), ('right', '120')]:
+                            margin = OxmlElement(f'w:{margin_name}')
+                            margin.set(qn('w:w'), margin_val)
+                            margin.set(qn('w:type'), 'dxa')
+                            tcMar.append(margin)
+                        tcPr.append(tcMar)
+
+                        # 셀 수직 정렬 (가운데)
+                        vAlign = OxmlElement('w:vAlign')
+                        vAlign.set(qn('w:val'), 'center')
+                        tcPr.append(vAlign)
+
+            # 테이블 테두리 스타일 (깔끔한 라인)
+            tbl = table._tbl
+            tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
+            tblBorders = OxmlElement('w:tblBorders')
+
+            # 외곽선만 진하게, 내부선은 연하게
+            for border_name in ['top', 'bottom']:
+                border = OxmlElement(f'w:{border_name}')
+                border.set(qn('w:val'), 'single')
+                border.set(qn('w:sz'), '8')  # 진한 선
+                border.set(qn('w:color'), '4A4A4A')
+                tblBorders.append(border)
+
+            for border_name in ['left', 'right']:
+                border = OxmlElement(f'w:{border_name}')
+                border.set(qn('w:val'), 'nil')  # 좌우 테두리 없음
+                tblBorders.append(border)
+
+            for border_name in ['insideH']:
+                border = OxmlElement(f'w:{border_name}')
+                border.set(qn('w:val'), 'single')
+                border.set(qn('w:sz'), '4')
+                border.set(qn('w:color'), 'E0E0E0')
+                tblBorders.append(border)
+
+            for border_name in ['insideV']:
+                border = OxmlElement(f'w:{border_name}')
+                border.set(qn('w:val'), 'single')
+                border.set(qn('w:sz'), '4')
+                border.set(qn('w:color'), 'E0E0E0')
+                tblBorders.append(border)
+
+            tblPr.append(tblBorders)
+
+            # 테이블 후 여백
+            spacer = doc.add_paragraph()
+            spacer.paragraph_format.space_after = Pt(15)
+
+            return table
+
+        def process_content_with_tables(doc, text):
+            """본문 텍스트에서 표를 감지하고 처리"""
+            blocks = []
+            current_block = []
+            table_lines = []
+
+            lines = text.split('\n')
+            i = 0
+
+            def is_table_start(line, next_line=None):
+                """표 시작 라인인지 확인"""
+                stripped = line.strip()
+                # 마크다운 테이블 (| cell | cell |)
+                if stripped.startswith('|') and stripped.endswith('|') and stripped.count('|') >= 2:
+                    return True
+                # 파이프로 구분된 내용 (cell | cell)
+                if '|' in stripped and len(stripped.split('|')) >= 2:
+                    parts = stripped.split('|')
+                    if any(p.strip() and not re.match(r'^[\s\-:]+$', p) for p in parts):
+                        return True
+                # 콜론 기반 테이블 (키: 값) - 연속된 경우
+                if next_line and ':' in stripped and ':' in next_line:
+                    if len(stripped.split(':')[0].strip()) < 30 and len(next_line.split(':')[0].strip()) < 30:
+                        return True
+                return False
+
+            def is_table_continue(line):
+                """표 계속 라인인지 확인"""
+                stripped = line.strip()
+                # 빈 줄은 표 종료
+                if not stripped:
+                    return False
+                # 마크다운 테이블
+                if stripped.startswith('|') and stripped.endswith('|'):
+                    return True
+                # 마크다운 구분선
+                if re.match(r'^\|[\s\-:]+\|$', stripped):
+                    return True
+                # 파이프로 구분된 내용
+                if '|' in stripped:
+                    return True
+                # 콜론 기반 (키: 값)
+                if ':' in stripped and len(stripped.split(':')[0].strip()) < 30:
+                    return True
+                return False
+
+            while i < len(lines):
+                line = lines[i]
+                next_line = lines[i + 1] if i + 1 < len(lines) else None
+
+                if is_table_start(line, next_line):
+                    # 이전 일반 텍스트 저장
+                    if current_block:
+                        blocks.append(('text', '\n'.join(current_block)))
+                        current_block = []
+
+                    # 표 라인 수집
+                    table_lines = [line]
+                    i += 1
+                    while i < len(lines) and is_table_continue(lines[i]):
+                        table_lines.append(lines[i])
+                        i += 1
+
+                    if len(table_lines) >= 2:
+                        blocks.append(('table', '\n'.join(table_lines)))
                     else:
-                        for pt in [p for p in bcontent.split('\n\n') if p.strip()]:
-                            # 챕터 첫 소제목의 첫 문단만 드롭캡, 이후엔 일반
-                            if (not first_para_done) and si == 0 and len(pt.strip()) > 1:
-                                drop_cap(pt.strip()[0], pt.strip()[1:])
+                        current_block.extend(table_lines)
+                    table_lines = []
+                else:
+                    current_block.append(line)
+                    i += 1
+
+            # 마지막 블록 저장
+            if current_block:
+                blocks.append(('text', '\n'.join(current_block)))
+
+            return blocks
+
+        for idx, chapter in enumerate(outline):
+            if chapter in chapters_data:
+                # ─────────────────────────────────────
+                # 챕터 시작 페이지 (프리미엄 오프너)
+                # ─────────────────────────────────────
+                clean_chapter = chapter
+                for prefix in [f"PART {idx + 1}.", f"PART{idx + 1}.", f"PART {idx + 1} ", f"PART{idx + 1} ", f"{idx + 1}.", f"{idx + 1})"]:
+                    clean_chapter = clean_chapter.replace(prefix, "").strip()
+
+                ch_name = add_chapter_opener(doc, idx, clean_chapter)
+                add_bookmark(ch_name, f"chapter_{idx + 1}")
+
+                doc.add_page_break()
+
+                # ─────────────────────────────────────
+                # 본문 시작
+                # ─────────────────────────────────────
+                ch_data = chapters_data[chapter]
+                subtopics = ch_data.get('subtopics', [])
+
+                for sub_idx, sub in enumerate(subtopics):
+                    content = ch_data.get('subtopic_data', {}).get(sub, {}).get('content', '')
+                    if content:
+                        # 소제목마다 새 페이지에서 시작 (첫 번째 제외)
+                        if sub_idx > 0:
+                            doc.add_page_break()
+
+                        # 소제목 (프리미엄 스타일)
+                        sub_title = add_subtopic_header(doc, sub, sub_idx)
+                        add_bookmark(sub_title, f"subtopic_{idx + 1}_{sub_idx + 1}")
+
+                        # 본문 내용 (표 감지 및 처리 포함, 소제목 중복도 제거)
+                        cleaned = clean_content(content, subtopic=sub)
+
+                        # 표가 포함된 콘텐츠 처리
+                        content_blocks = process_content_with_tables(doc, cleaned)
+
+                        is_first_para = True
+                        for block_type, block_content in content_blocks:
+                            if block_type == 'table':
+                                # 표 데이터 파싱 및 프리미엄 테이블 생성
+                                table_data = parse_table_data(block_content)
+                                if table_data and len(table_data) >= 2:
+                                    # 표 전 여백
+                                    spacer = doc.add_paragraph()
+                                    spacer.paragraph_format.space_after = Pt(10)
+                                    add_premium_table(doc, table_data)
+                                    is_first_para = False
                             else:
-                                body_paragraph(pt.strip(), first=(not first_para_done))
-                            first_para_done = True
-                if si < len(subs) - 1:
-                    ornament()
+                                # 일반 텍스트 처리
+                                paragraphs = block_content.split('\n\n')
+                                if not paragraphs or not any(p.strip() for p in paragraphs):
+                                    paragraphs = block_content.split('\n')
 
-            # 챕터 끝 핵심 정리 박스
-            ch_summary = chapters_data[chapter].get('key_points', [])
-            if ch_summary:
-                key_summary_box(ch_summary, idx + 1)
+                                for para_text in paragraphs:
+                                    if para_text.strip():
+                                        format_body_paragraph(doc, para_text.strip(), is_first=is_first_para)
+                                        is_first_para = False
 
-        # ════════════════════════ 에필로그 ════════════════════════
-        ep_sec = doc.add_section(WD_SECTION.NEW_PAGE)
-        _apply_section(ep_sec)
-        ep_sec.different_first_page_header_footer = True
-        page_number_footer(ep_sec)
-        vspace(36)
-        el = doc.add_paragraph(); el.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(el.add_run(track_text("EPILOGUE", 2)), 10, serif=False, color=_FAINT)
-        el.paragraph_format.space_after = Pt(8)
-        hairline(width_cm=1.4, color=_GOLD, space_after=30, size=8)
-        epilogue_text = None
-        if interview_data:
+                        # 소제목 사이 구분 (마지막 소제목 제외)
+                        if sub_idx < len(subtopics) - 1:
+                            separator = doc.add_paragraph()
+                            separator.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            sep_run = separator.add_run("· · ·")
+                            set_font(sep_run, 10, color=(200, 200, 200))
+                            separator.paragraph_format.space_before = Pt(30)
+                            separator.paragraph_format.space_after = Pt(30)
+
+                doc.add_page_break()
+
+        # ══════════════════════════════════════════════════════════════
+        # 에필로그 (프리미엄 에디토리얼 스타일)
+        # ══════════════════════════════════════════════════════════════
+
+        # 상단 넓은 여백
+        for _ in range(6):
+            doc.add_paragraph()
+
+        # 에필로그 라벨
+        ep_label = doc.add_paragraph()
+        ep_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ep_label_run = ep_label.add_run("E P I L O G U E")
+        set_font(ep_label_run, 9, color=(160, 160, 160))
+        ep_label.paragraph_format.space_after = Pt(16)
+
+        # 구분선
+        ep_line = doc.add_paragraph()
+        ep_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ep_line_run = ep_line.add_run("───────────")
+        set_font(ep_line_run, 10, color=(200, 200, 200))
+        ep_line.paragraph_format.space_after = Pt(20)
+
+        # 에필로그 제목
+        epilogue_title = doc.add_paragraph()
+        epilogue_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ep_run = epilogue_title.add_run("마치며")
+        set_font(ep_run, 14, bold=True, color=(40, 40, 40))
+        epilogue_title.paragraph_format.space_after = Pt(40)
+
+        # 에필로그 내용 - AI가 인터뷰 내용을 참고해서 자연스럽게 작성
+        # [캐시] 프롤로그와 동일하게 1회만 생성
+        if st.session_state.get('_epilogue_cache_key') == _pe_cache_key and st.session_state.get('_epilogue_cache'):
+            epilogue_text = st.session_state['_epilogue_cache']
+            interview_data_for_epilogue = None
+        else:
+            epilogue_text = None
+            interview_data_for_epilogue = interview_data
+        if epilogue_text is None and interview_data_for_epilogue:
             epilogue_prompt = f"""당신은 한국 자기계발 베스트셀러 작가입니다. 마지막 페이지를 덮은 독자가 한 번 더 처음으로 돌아가게 만드는 에필로그를 작성하세요.
 
 [저자 정보 - 참고용, 그대로 복사하지 말 것]
@@ -2692,47 +2475,130 @@ def create_ebook_docx(title, subtitle, author, chapters_data, outline, interview
 - 마크다운 문법
 
 에필로그만 출력하세요."""
-            gen = ask_ai(epilogue_prompt, 0.7, ensure_quality=True)
-            if gen:
-                epilogue_text = gen
+
+            generated_epilogue = ask_ai(epilogue_prompt, 0.7, ensure_quality=True)
+            if generated_epilogue:
+                epilogue_text = generated_epilogue
+                st.session_state['_epilogue_cache'] = epilogue_text
+                st.session_state['_epilogue_cache_key'] = _pe_cache_key
+
         if not epilogue_text:
-            epilogue_text = ("여기까지 읽어주셔서 고맙습니다.\n\n완벽하지 않아도 괜찮습니다. 오늘 할 수 "
-                             "있는 한 가지만 시작해 보세요. 작은 시작이 가장 멀리 갑니다.")
+            epilogue_text = """여기까지 읽어주셔서 감사합니다.
+
+이 책에 담긴 내용이 당신의 삶에 작은 변화라도 만들어낸다면 그것으로 충분합니다.
+
+완벽할 필요 없습니다. 지금 당장 할 수 있는 것 하나만 시작해보세요.
+
+작은 시작이 큰 결과를 만듭니다.
+
+항상 응원합니다."""
+
+        # 마크다운 헤더(#, ##) + 굵게(**) + '에필로그/Epilogue' 라벨 모두 제거
         epilogue_text = re.sub(r'^\s*#+\s*(에필로그|Epilogue|마치며|맺음말)\s*\.?\s*$', '', epilogue_text, flags=re.MULTILINE | re.IGNORECASE)
+        epilogue_text = re.sub(r'^\s*\*+\s*(에필로그|Epilogue|마치며|맺음말)\s*\*+\s*$', '', epilogue_text, flags=re.MULTILINE | re.IGNORECASE)
+        epilogue_text = re.sub(r'^\s*(에필로그|Epilogue|마치며|맺음말)\s*\.?\s*\n', '', epilogue_text, flags=re.IGNORECASE)
+        epilogue_text = epilogue_text.replace('**에필로그**', '').replace('**Epilogue**', '')
         epilogue_text = epilogue_text.lstrip('\n').strip()
-        for i, t in enumerate([x for x in epilogue_text.split('\n\n') if x.strip()]):
-            body_paragraph(t.strip(), first=(i == 0))
-        vspace(30)
-        sg = doc.add_paragraph(); sg.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        set_font(sg.add_run(author or "저자"), 11, italic=True, color=_SOFT, serif=True)
 
-        # ════════════════════════ 저자 소개 ════════════════════════
+        # 에필로그 본문 - 본문과 완전히 동일한 양식
+        for para_text in epilogue_text.split('\n\n'):
+            if para_text.strip():
+                para = doc.add_paragraph()
+                para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                para_run = para.add_run(para_text.strip())
+                set_font(para_run, 10.5, color=(45, 45, 45))
+                para_format = para.paragraph_format
+                para_format.line_spacing = 1.85
+                para_format.space_after = Pt(14)
+                para_format.first_line_indent = Cm(0.6)
+
+        # 저자 서명 (프리미엄 스타일)
+        for _ in range(3):
+            doc.add_paragraph()
+
+        # 서명 라인
+        sign_line = doc.add_paragraph()
+        sign_line.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        sign_line_run = sign_line.add_run("─────")
+        set_font(sign_line_run, 10, color=(200, 200, 200))
+        sign_line.paragraph_format.space_after = Pt(10)
+
+        sign_para = doc.add_paragraph()
+        sign_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        sign_run = sign_para.add_run(f"{author if author else '저자'}")
+        set_font(sign_run, 11, italic=True, color=(80, 80, 80))
+
         doc.add_page_break()
-        vspace(96)
-        al = doc.add_paragraph(); al.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(al.add_run(track_text("ABOUT THE AUTHOR", 1)), 9, serif=False, color=_FAINT)
-        al.paragraph_format.space_after = Pt(10)
-        hairline(width_cm=1.4, color=_GOLD, space_after=22, size=8)
-        an = doc.add_paragraph(); an.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(an.add_run(author or "저자"), 16, bold=True, color=_INK, serif=True)
-        an.paragraph_format.space_after = Pt(18)
-        if interview_data:
-            field = interview_data.get('field', ''); exp = interview_data.get('experience_years', '')
-            career = interview_data.get('author_career', ''); method = interview_data.get('core_method', '')
-            if career:
-                author_bio = f"{field} 분야에서 {exp} 활동해온 실전가.\n\n{career}\n\n{method[:100] if method else ''}"
-            else:
-                author_bio = f"{field} 분야에서 {exp} 활동해온 실전가.\n\n{method}"
-        else:
-            author_bio = "실전에서 직접 부딪히며 쌓은 노하우를 독자와 나누고자 이 책을 썼다."
-        for t in [x for x in author_bio.split('\n\n') if x.strip()]:
-            bp = doc.add_paragraph(); bp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            set_font(bp.add_run(t.strip()), 10, color=_SOFT, serif=True)
-            bp.paragraph_format.line_spacing = 1.7; bp.paragraph_format.space_after = Pt(10)
-        vspace(40)
-        em = doc.add_paragraph(); em.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_font(em.add_run("✦"), 11, color=_FAINT, serif=False)
 
+        # ══════════════════════════════════════════════════════════════
+        # 저자 소개 페이지 (프리미엄 에디토리얼 스타일)
+        # ══════════════════════════════════════════════════════════════
+
+        # 상단 넓은 여백
+        for _ in range(6):
+            doc.add_paragraph()
+
+        # 저자 소개 라벨
+        about_label = doc.add_paragraph()
+        about_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        about_label_run = about_label.add_run("A B O U T")
+        set_font(about_label_run, 9, color=(160, 160, 160))
+        about_label.paragraph_format.space_after = Pt(16)
+
+        # 구분선
+        about_line = doc.add_paragraph()
+        about_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        about_line_run = about_line.add_run("───────────")
+        set_font(about_line_run, 10, color=(200, 200, 200))
+        about_line.paragraph_format.space_after = Pt(20)
+
+        # 저자명 (크게)
+        author_name_para = doc.add_paragraph()
+        author_name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        author_name_run = author_name_para.add_run(author if author else "저자")
+        set_font(author_name_run, 16, bold=True, color=(40, 40, 40))
+        author_name_para.paragraph_format.space_after = Pt(30)
+
+        # 저자 소개 내용
+        if interview_data:
+            career_text = interview_data.get('author_career', '')
+            field = interview_data.get('field', '')
+            exp = interview_data.get('experience_years', '')
+            method = interview_data.get('core_method', '')
+
+            if career_text:
+                author_bio = f"""{field} 분야에서 {exp}간 활동해온 실전가.
+
+{career_text}
+
+{method[:100] if method else ''}"""
+            else:
+                author_bio = f"""{field} 분야에서 {exp}간 활동해온 실전가.
+
+{method}"""
+        else:
+            author_bio = """실전에서 직접 부딪히며 쌓은 노하우를 독자들과 나누고자 이 책을 썼다."""
+
+        for para_text in author_bio.split('\n\n'):
+            if para_text.strip():
+                para = doc.add_paragraph()
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                para_run = para.add_run(para_text.strip())
+                set_font(para_run, 10, color=(80, 80, 80))
+                para_format = para.paragraph_format
+                para_format.line_spacing = 1.6
+                para_format.space_after = Pt(14)
+
+        # 하단 장식
+        for _ in range(4):
+            doc.add_paragraph()
+
+        end_mark = doc.add_paragraph()
+        end_mark.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        end_run = end_mark.add_run("◆")
+        set_font(end_run, 12, color=(200, 200, 200))
+
+        # 메모리에 저장
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
@@ -2740,188 +2606,67 @@ def create_ebook_docx(title, subtitle, author, chapters_data, outline, interview
 
     except Exception as e:
         return None, f"문서 생성 오류: {str(e)}"
-# ==========================================
-# 기법(메서드) 이름 — 영문 통일 + 책마다 고유
-# ==========================================
-def load_used_method_names():
-    """이전 전자책들에서 쓴 기법 이름 목록 (겹침 방지용)"""
-    names = load_config().get('used_method_names', [])
-    return names if isinstance(names, list) else []
 
+def polish_outline(chapters, subtopics, topic):
+    """목차 교정 패스 — 후킹은 유지하고 어색한 표현만 자연스럽게 다듬기"""
+    lines = []
+    for ci, ch in enumerate(chapters):
+        lines.append(f"C{ci+1}: {ch}")
+        for si, s in enumerate(subtopics.get(ch, [])):
+            lines.append(f"S{ci+1}-{si+1}: {s}")
+    numbered = "\n".join(lines)
 
-def remember_method_name(name):
-    if not name:
-        return
-    names = load_used_method_names()
-    if name not in names:
-        names.append(name)
-        save_config({'used_method_names': names[-200:]})  # 최근 200개만 보관
+    prompt = f"""당신은 한국 대형 출판사의 최종 교정 데스크입니다. 표지에 인쇄되기 직전의 목차를 마지막으로 다듬습니다.
 
+아래는 전자책 목차 초안입니다. 구매 욕구를 일으키는 후킹(호기심 갭, 충격 통계, 통념 뒤집기)은 그대로 유지하면서, 한국어로 어색한 표현만 자연스럽게 고쳐주세요.
 
-def _fallback_method_name(topic):
-    import random
-    # 발음 가능한 2~3자 영문 약자 + 자연스러운 한글 접미사 (예: "ERP 공식")
-    acronym = "".join(random.sample("ABCDEFGHJKLMNPRSTVWXYZ", k=random.choice([2, 3])))
-    suffix = random.choice(["공식", "법칙", "시스템", "전략", "구조", "사이클"])
-    return f"{acronym} {suffix}"
+[교정 기준 — 소리 내어 읽었을 때 서점 베스트셀러 목차처럼 자연스러워야 함]
+1. 어법 호응: 주어와 서술어가 자연스럽게 연결되는가 ("회복이 굴러간다", "시스템이 잠든다" → 고칠 것)
+2. 추상 명사 의인화 제거: "공식이 멈춘 날", "시스템 위에 얹다", "구조가 깨어난다" 류
+3. 번역투/AI투 제거: "~하는 것의 힘", "~가 가져다주는", "진정한", "여정", "~를 통해"
+4. 과장 클리셰 완화: "흔적도 없다", "통째로 바뀐다", "완전히 다른 차원"
+5. 의미 불명 조어 수정: 뜻이 한 번에 안 들어오는 줄임말/합성어
+6. 이미 자연스러운 줄은 절대 바꾸지 말 것 (전체의 70% 이상은 그대로 유지)
+7. 글자 수는 원래 줄과 비슷하게 유지 (챕터 13~18자, 소제목 15~30자)
+8. 호기심 갭 유지: 결과/사건만 보여주고 방법/이유를 숨긴 구조를 절대 풀어서 설명하지 말 것
+9. 콜론(:) 금지, "~하는 방법", "~의 중요성" 같은 밍밍한 표현으로 바꾸지 말 것
 
+[주제] {topic}
 
-def get_or_create_method_name(topic, interview_data=None, force_new=False):
-    """이 책의 기법 이름을 만들거나 가져온다.
+[목차 초안]
+{numbered}
 
-    형식: '영문 약자(2~4자) + 한글 접미사'  예) "ERP 공식", "DPS 법칙"
-    - force_new=True: 새 전자책 → 이전 책들과 겹치지 않는 새 이름
-    - force_new=False: 같은 책 안의 재생성 → 이미 정해진 이름 재사용
-    """
-    if not force_new and st.session_state.get('method_name'):
-        return st.session_state['method_name']
+[출력 규칙 — 어기면 전체 무효]
+- 입력과 정확히 같은 줄 수, 같은 라벨(C1, S1-1 형식)로만 출력
+- 각 줄: 라벨 + 콜론 + 교정된(또는 그대로인) 제목
+- 챕터 줄(C1~C5)에 'PART 1.' 같은 접두사가 있으면 그대로 유지
+- 설명, 주석, 빈 줄, 다른 텍스트 일절 금지"""
 
-    used = load_used_method_names()
-    used_str = ", ".join(used[-60:]) if used else "(아직 없음)"
-    seed = uuid.uuid4().hex[:6]
-    core = (interview_data or {}).get('core_method', '') if interview_data else ''
+    result = ask_ai(prompt, 0.4, ensure_quality=True)
+    if not result:
+        return chapters, subtopics
 
-    prompt = f"""이 전자책의 '기법 이름' 딱 하나를 짓는다.
+    fixed = {}
+    for line in result.strip().split('\n'):
+        m = re.match(r'^\s*([CS][\d\-]+)\s*[:.]\s*(.+)$', line.strip())
+        if m:
+            val = m.group(2).strip().strip('"').strip("'").strip()
+            if len(val) >= 5:
+                fixed[m.group(1)] = val
 
-주제: {topic}
-핵심 방법: {core}
-
-형식 (반드시 지킬 것):
-- "영문 대문자 약자(2~4자) + 한글 접미사" 한 덩어리.  예) "ERP 공식", "DPS 법칙", "ARC 전략", "PMR 시스템"
-- 약자는 발음 가능하고, 각 글자가 주제와 관련된 영어 단어의 첫 글자여야 한다(의미 있는 약자).
-  예) ERP = Earn-Reinvest-Profit, DPS = Discover-Plug-Scale
-- 한글 접미사는 다음 중에서만: 공식 / 법칙 / 시스템 / 전략 / 구조 / 사이클
-- 약자만 영어이고, 영어 '단어'를 길게 늘어놓지 말 것.
-- 약자는 반드시 영문 '대문자'로만(예: ERP O, erp/Peak X). 일반 영어 단어(peak, loop, flow 등)를 약자 자리에 쓰지 말 것.
-
-❌ 절대 금지 (어색한 예):
-- "eBook Revenue Loop", "Cashflow Ladder" 같은 영어 다단어 구절 (부자연스러움)
-- 한글 약자, 의미 없는 자음 나열, 발음 불가능한 약자
-- 아래 이미 쓴 이름과 약자·접미사가 겹치는 것:
-  {used_str}
-
-다양성 시드 {seed} 참고해 매번 다르게.
-
-JSON만 출력:
-{{"acronym": "영문 대문자 2~4자", "expansion": "약자 풀이(영문, 하이픈 연결)", "suffix": "한글 접미사", "method_name": "약자 + 공백 + 접미사"}}"""
-
-    name = None
-    expansion = ""
-    try:
-        res = ask_ai(prompt, 0.9)
-        parsed = parse_json(res) if res else None
-        if parsed:
-            ac = (parsed.get('acronym') or '').strip().upper()
-            sf = (parsed.get('suffix') or '').strip()
-            mn = (parsed.get('method_name') or '').strip()
-            expansion = (parsed.get('expansion') or '').strip()
-            # method_name 우선, 없으면 약자+접미사 조합
-            name = mn if mn else (f"{ac} {sf}" if ac and sf else '')
-    except Exception:
-        name = None
-
-    # 형식 검증: 영문 대문자 2~4자 + 공백 + 허용된 한글 접미사 ('루틴' 제외 — 어색)
-    allowed_suffixes = ("공식", "법칙", "시스템", "전략", "구조", "사이클")
-    suffix_re = "(" + "|".join(allowed_suffixes) + ")"
-    pattern = r"^[A-Z]{2,4}\s" + suffix_re + r"$"
-
-    def _normalize(n):
-        """'PMR  공식' 같은 입력을 정규화하고, 약자를 대문자로 통일."""
-        n = (n or "").strip()
-        parts = n.split()
-        if len(parts) == 2:
-            ac, sf = parts[0], parts[1]
-            # 약자가 알파벳으로만 이뤄졌으면 대문자화 (peak → PEAK 시도)
-            if ac.isalpha() and ac.isascii():
-                ac = ac.upper()
-            return f"{ac} {sf}"
-        return n
-
-    def _valid(n):
-        n = (n or "").strip()
-        if not n or n in used:
-            return False
-        return re.fullmatch(pattern, n) is not None
-
-    name = _normalize(name)
-    if not _valid(name):
-        name = _fallback_method_name(topic)
-        expansion = ""  # 폴백 이름은 의미 있는 약자 풀이가 없음
-        tries = 0
-        while name in used and tries < 15:
-            name = _fallback_method_name(topic)
-            tries += 1
-
-    st.session_state['method_name'] = name
-    st.session_state['method_expansion'] = expansion
-    remember_method_name(name)
-    return name
-
-
-def method_lock_rule(name):
-    """모든 생성 단계에서 동일하게 끼워 넣는 '기법 이름 고정' 규칙 블록"""
-    return f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔒 기법 이름 고정 (이 프롬프트의 다른 어떤 작명/금지 규칙보다 우선)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-이 책의 기법 이름은 정확히 "{name}" 으로 이미 확정되어 있다. (형식: 영문 약자 + 한글 접미사)
-- 모든 곳에서 "{name}" 을 글자 그대로, 띄어쓰기까지 똑같이 사용한다.
-- 약자를 영어 단어로 풀어쓰거나, 다른 약자/이름으로 바꾸거나, 접미사를 바꾸는 것을 절대 금지한다.
-- ○○○ / [컨셉명] / [시스템명] 자리에는 전부 "{name}" 을 넣는다.
-- "{name}" 에 또 다른 한글 접미사(시스템/공식 등)를 덧붙이지 않는다. 위 이름 그대로만 쓴다.
-"""
-
-
-def review_outline_grammar(outline_text, method_name=""):
-    """생성된 목차를 '어법 전담'으로 한 번 더 검토·교정한다.
-    자극/호기심은 유지하되, 어색한 표현만 자연스럽게 고친 목차를 반환.
-    실패 시 원본을 그대로 반환(안전)."""
-    if not outline_text or not outline_text.strip():
-        return outline_text
-
-    lock = f'기법 이름 "{method_name}" 은 글자 그대로 유지(절대 변경 금지).' if method_name else ""
-
-    prompt = f"""너는 30년 경력의 한국어 교정 전문 편집자다. 아래는 자기계발서 목차다.
-너의 임무는 '어색한 줄만 콕 집어 고치는 것'과 '같은 표현 반복을 없애는 것' 딱 두 가지다. 목차의 의미·자극·호기심·구성·강도는 절대 건드리지 마라.
-⚠️ 가장 흔한 실수: 멀쩡한 줄까지 손대서 밋밋하게 만드는 것. 이미 자연스러운 줄은 단 한 글자도 바꾸지 마라(고칠 게 없으면 그대로 둔다). 강한 표현을 순화하거나 자극을 줄이면 교정 실패다.
-{lock}
-
-[고쳐야 할 어색함 — 반드시 잡아낼 것]
-1. 비유 오용: 비유 명사를 '되다/안 되다'의 대상으로 쓴 것
-   ❌ "배당주를 사도 월세가 안 되는 이유" → ✅ "배당주를 사도 월 100만원조차 못 받는 이유"
-2. 사물에 안 맞는 동사: 추상/사물에 물리·생물 동사를 억지로 붙인 것
-   ❌ "캘린더에 박은 습관" → ✅ "캘린더에 기재한 습관"
-   ❌ "통장에 꽂히는 30만원" → ✅ "매달 통장에 들어오는 30만원"
-   ❌ "계좌가 자란다 / 살아났다" → ✅ "잔고가 늘어난다 / 수익이 회복됐다"
-   ❌ "재투자를 켠 사람" → ✅ "수익을 다시 넣은 사람"
-3. 대비 짝 어긋남: "A는 ~, B는 ~"에서 양쪽 서술어 축이 다른 것
-   ❌ "누구는 월세처럼 받고 누구는 한 푼도 못 쓴" → ✅ "누구는 월세처럼 받고 누구는 한 푼도 못 버는"
-4. 주어-서술어 비호응, 억지 은유, 뜻이 통하지 않는 단어 조합
-5. 원어민이 읽다가 "이게 무슨 말이지?" 하고 멈칫하는 모든 줄
-
-[반복 제거 — 어법 교정만큼 중요]
-- 목차 전체(25줄)를 훑어 '같은 핵심 단어·표현·문장 끝 패턴'이 두 번 이상 나오면, 의미·자극을 유지한 채 한쪽만 다른 표현으로 바꿔 중복을 없앤다.
-  · 예: '결정적'이 두 줄에 있으면 한쪽을 '단 하나의 / 의외의' 등으로. '~하는 이유'가 두 줄이면 한쪽을 '~한 순간 / ~의 차이' 등으로. '무너지다'가 두 줄이면 한쪽을 '주저앉다 / 흔들리다'로.
-  · 조사·접속사 같은 기능어와 컨셉명("{method_name}")·'○○○'는 반복으로 치지 않는다.
-- 같은 숫자(예: 3개 + 3개월 + 3년)가 여러 번이면 일부를 다른 숫자·표현(열에 아홉, 대부분 등)으로 바꿔 겹침을 푼다.
-
-[교정 원칙]
-- 어법이 깨진 줄(비유 오용·사물에 안 맞는 동사·주어서술어 비호응·뜻 모를 조합)만 같은 의도·같은 자극을 유지한 채 자연스럽게 고친다.
-- 자연스럽고 강한 줄은 손대지 마라. 의미를 바꾸거나 밋밋하게 만들면 실패다.
-- 5개 PART 제목이 이어 읽혔을 때의 이야기 흐름(바닥→도약)과 순서를 절대 깨지 마라.
-- 형식(PART 줄, 소제목 줄, 줄 수, 순서)은 입력과 똑같이 유지한다.
-- 설명·주석·코드블록 없이, 교정된 목차 텍스트만 그대로 출력한다.
-
-[교정할 목차]
-{outline_text}"""
-
-    try:
-        fixed = ask_ai(prompt, 0.3)
-        if fixed and fixed.strip() and len(fixed.strip()) > len(outline_text.strip()) * 0.5:
-            return fixed.strip()
-    except Exception:
-        pass
-    return outline_text
-
+    new_chapters = []
+    new_subtopics = {}
+    for ci, ch in enumerate(chapters):
+        nch = fixed.get(f"C{ci+1}", ch)
+        if nch in new_chapters:  # 교정 결과가 중복되면 원본 유지
+            nch = ch
+        new_chapters.append(nch)
+        subs = []
+        for si, s in enumerate(subtopics.get(ch, [])):
+            ns = fixed.get(f"S{ci+1}-{si+1}", s)
+            subs.append(ns if ns not in subs else s)
+        new_subtopics[nch] = subs
+    return new_chapters, new_subtopics
 
 def generate_outline_only(interview_data, progress_placeholder):
     """인터뷰 데이터를 기반으로 목차까지만 생성 (본문 제외)"""
@@ -2935,55 +2680,87 @@ def generate_outline_only(interview_data, progress_placeholder):
         target = f"{interview_data.get('target_reader', '')} - {interview_data.get('target_problem', '')}"
         st.session_state['target_persona'] = target
 
-        # 새 전자책 → 이전 책들과 겹치지 않는 영문 기법 이름을 새로 확정
-        method_name = get_or_create_method_name(topic, interview_data, force_new=True)
-        method_expansion = st.session_state.get('method_expansion', '')
-
         # 2. 책 고유 컨셉 생성 (가장 중요!)
         progress_placeholder.info("💡 2/4 책 고유 컨셉 설계 중...")
         concept_prompt = f"""당신은 크몽/클래스101 베스트셀러 전자책 기획자입니다.
-이 책의 기법 이름은 이미 "{method_name}" (영문 약자 + 한글 접미사 형식)으로 확정되어 있습니다.
-당신의 일은 새 이름을 짓는 게 아니라, 이 기법을 중심으로 책의 관점과 메시지를 설계하는 것입니다.
-
-{method_lock_rule(method_name)}
-
-이 기법의 약자 풀이(참고): {method_expansion if method_expansion else "(풀이 없음)"}
-약자가 의미 있는 머리글자라면, 핵심 관점·메시지에 그 단계적 흐름이 자연스럽게 묻어나게 하라. 단 "Y:~" 식 사전 나열은 금지.
+이 책만의 '고유한 시스템/공식'을 만들어야 합니다.
 
 [저자 정보]
 주제: {topic}
 핵심 방법: {interview_data.get('core_method', '')}
 저자만의 차별점: {interview_data.get('unique_point', '')}
 타겟의 고민: {interview_data.get('target_problem', '')}
-저자의 구체적 노하우·실전 디테일(★ 책의 핵심 재료 — 컨셉에 반드시 반영): {interview_data.get('detailed_knowhow', '') or '(미입력)'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 실제 잘 팔리는 전자책의 고유 시스템/공식 예시
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[영어+알파벳 조합]
+• SLP 공식 (Search-Learn-Produce)
+• CPM 전략 (Contents-Profit-Multiply)
+• 3R 시스템 (Research-Run-Repeat)
+
+[한글 조어]
+• 단단한 매출 구조
+• 복리 통장 공식
+• 잠자는 매출 회로
+
+[분야별 비유 - 다양하게!]
+• 주식: 스노우볼, 배당 파이프라인, 현금흐름 엔진
+• 블로그: 검색 알고리즘, 트래픽 자석, 상위노출 공식
+• 마케팅: 전환 퍼널, 구매 트리거, 설득 코드
+• 습관: 루틴 시스템, 자동화 루프, 습관 스택
+• 투자: 리스크 헤지, 분산 매트릭스, 안전마진
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ 만들어야 할 것
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. 핵심 관점 — 이 주제를 "{method_name}"(이)라는 기법으로 어떻게 새롭게 보는가? 남들과 다른 접근법.
-2. 핵심 메시지 — "{method_name}(으)로 ~할 수 있다" 형식의 한 문장.
+1. 고유 시스템/공식 이름 (가장 중요!)
+   - 영어 약자 + 한글 설명 (예: "CPM 전략")
+   - 또는 직관적인 한글 조어 (예: "단단한 매출 구조")
+   - 목차 전체에서 이 용어가 반복되어야 함
 
-❌ 절대 금지:
-- 기법 이름을 새로 짓거나 한글로 바꾸는 것 (이미 "{method_name}"으로 고정)
-- "제국을 건설/왕좌/전설의/세계 최초" 같은 과장
-- 황금·보물·비밀·마법·연금술 같은 유치한 단어
+2. 핵심 관점
+   - 이 주제를 어떤 새로운 시각으로 보는가?
+   - 남들과 다른 접근법
+
+3. 핵심 메시지
+   - "[시스템명]만 알면 ~할 수 있다" 형식
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 절대 금지
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❌ 부자연스러운 과장:
+- "제국을 건설", "왕좌에 오르다", "언더그라운드"
+- "전설의", "역사를 바꾼", "세계 최초"
+
+❌ 유치한 단어:
+- 황금, 보물, 비밀, 마법, 연금술
+
+❌ 모든 분야에 같은 비유 사용:
+- 부동산 비유만 반복하지 말 것
+- 주제에 맞는 다양한 비유 사용
+
+❌ 이미 유명한 이름:
+- 역행자, 추월차선, 아토믹 해빗 등 그대로 사용
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📝 출력 형식
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 [고유 시스템/공식 이름]
-{method_name}
+(영어 약자+한글 또는 참신한 한글 조어)
 
 [핵심 관점]
 (2~3문장, 자연스럽게)
 
 [핵심 메시지]
-(한 문장, "{method_name}(으)로 ~하는 방법")
+(한 문장, "[시스템명]으로 ~하는 방법")
 
 [목차에서 반복할 키워드]
-{method_name}"""
+(시스템 이름 또는 핵심 단어 1~2개)"""
 
         book_concept = ask_ai(concept_prompt, 0.8, ensure_quality=True)
         st.session_state['book_concept'] = book_concept
@@ -2995,8 +2772,6 @@ def generate_outline_only(interview_data, progress_placeholder):
 
 [이 책의 컨셉]
 {book_concept}
-
-이 책의 기법 이름은 "{method_name}"으로 확정됨. 제목에 기법 이름을 넣을 경우 반드시 이 이름 그대로 사용(약자 풀어쓰기·재작명 금지).
 
 [주제]
 {topic}
@@ -3072,92 +2847,273 @@ JSON만 출력:
 
         # 4. 목차 생성 (책 컨셉 기반)
         progress_placeholder.info("📋 4/4 목차 설계 중...")
-        outline_prompt = f"""너는 한국 자기계발 전자책 시장에서 목차만 보고 독자가 결제하게 만드는 카피라이터다.
+        outline_prompt = f"""당신은 한국 자기계발 분야 톱 0.1% 기획자입니다. 서점에서 단 5초간 목차만 본 사람이 책을 손에서 못 놓게 만드는 5장짜리 목차를 씁니다.
 
-[책 정보]
-주제: {topic}
-타겟 독자: {interview_data.get('target_reader', '')} — {interview_data.get('target_problem', '')}
-저자의 구체적 노하우: {interview_data.get('detailed_knowhow', '') or '(미입력)'}
-책 시그니처 컨셉: {book_concept}
-컨셉명: {method_name}
-{"컨셉 약자 풀이: " + method_expansion if method_expansion else ""}
+목차의 단 하나의 목적: 독자가 "이 책을 안 읽으면 평생 손해"라고 느끼게 만드는 것.
+정보 전달은 본문이 한다. 목차는 100% 구매심리만 다룬다.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-목차가 팔리는 단 하나의 원리
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[이 책의 시그니처 컨셉/시스템]
+{book_concept}
 
-독자는 목차를 5초 훑는다. 그 5초 안에 "어? 이거 딱 내 얘기인데"라는 한 문장이 떠올라야 결제한다.
-방법을 알려주는 목차는 안 팔린다. 독자의 현실을 정확히 짚어서 불안하게 만드는 목차가 팔린다.
+[주제]: {topic}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-딱 3가지 무기만 써라
+🛒 구매 결정 5초 룰 (모든 규칙 중 1순위)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-① 독자 행동 직접 저격
-독자가 지금 실제로 하고 있는 행동·습관·변명을 정확히 집어내라. 독자가 어제 한 행동을 보여서 "이 저자가 나를 알고 있다"고 느끼게 만드는 것이 가장 강한 무기다.
-- "퇴사 준비를 3년째 하고 있는데 통장은 그대로인 이유"
-- "강의를 50개 들었는데 수입은 그대로인 사람들의 공통점"
-- "증권사 앱을 하루 세 번 이상 열어본 해에 수익률이 가장 낮았다"
-→ [타겟 독자]와 [저자의 노하우]를 읽고, 그 독자가 오늘 실제로 한 행동 중 가장 뜨끔한 것 5개 이상 목차에 박아라.
+독자는 목차를 5초만 본다. 그 5초 안에 다음 3가지가 동시에 작동해야 결제한다.
 
-② 통념 박살
-독자가 맞다고 믿는 것을 정반대로 뒤집어라. "내 탓이 아니었다"는 안도와 충격이 동시에 와야 결제한다.
-- "부지런한 사람일수록 더 빨리 나가떨어진다"
-- "의지로 버틴 사람일수록 더 크게 무너진다"
-- "열심히 할수록 오히려 가난해지는 사람의 패턴"
-→ 25줄 중 최소 5줄은 독자가 "어? 그럼 내가 틀린 건가?"라고 멈추게 만들어라.
+[1] 정체성 변화 발견 — "이걸 읽으면 나는 OO한 사람이 된다"
+   → 5개 챕터 제목을 이어 읽으면 한 사람의 결정적 변화가 보여야 한다.
+   ✅ "단단해진 멘탈은 인생을 통째로 바꾼다" (변화 서사 O)
+   ❌ "멘탈 관리의 다양한 기법" (정체성 변화 X — 즉시 폐기)
 
-③ 장면+숫자로 방법은 숨기기
-결과 장면은 보여주되 방법·이유는 본문에 숨겨라. 답을 같은 줄에 다 보여주면 결제 안 한다.
-- "정확히 47일째, 통장 잔고가 처음으로 불어난 그 순간" (왜·어떻게는 본문)
-- "1년 만에 사직서를 낸 사람들의 마지막 한 달이 닮은 이유"
-- "월 100을 넘긴 사람들이 가장 먼저 끊은 습관 하나"
-→ 소제목에는 구체적 숫자(금액·기간·비율·인원)를 절반 이상 넣어라.
-→ 단, 방법을 숨기되 "이렇게 하면 되는구나"라는 작동 원리의 큰 줄기는 한 조각 드러내라. 근거 없는 주장만 25줄이면 신뢰가 없어 안 팔린다.
+[2] 손실회피 작동 — "이걸 모르면 평생 OO한다"
+   → 통념 박살(인지부조화) 챕터/소제목이 최소 3개 들어가야 한다.
+   ✅ "의지로 버틴 사람일수록 더 크게 무너진다"
+   ❌ "멘탈 관리의 중요성" (잃을 게 안 보임)
+
+[3] 구체성 — 추상 명사 1개당 구체적 숫자/장면 1개
+   → "많은 사람" 금지, "월급 280만원짜리 7년차 회사원" 가능
+   → 시간(90초, 47일), 금액(34만원, 1억), 비율(99%, 8할) 적극 사용
+
+25줄(챕터 5 + 소제목 20) 중 한 줄이라도 "그냥 정보"가 섞이면 그 목차는 평이해진다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-구조 규칙
+💎 컨셉명 작명 규칙 (위에서 받은 컨셉이 어색하면 다듬어 사용)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-5개 PART 제목을 세로로 이어 읽으면 한 사람의 이야기가 보여야 한다:
-PART 1 (바닥: 지금 이러고 있지?) → PART 2 (왜: 네 탓이 아니었다) → PART 3 (전환: 처음 달라진 그 순간) → PART 4 (변화: 이제 다른 사람이 됐다) → PART 5 (도약: 1년 뒤 완전히 다른 인생)
+[좋은 컨셉명]
+✅ 영문 3~4자 약어 (발음 가능 + 의미 있음): DPS, ARC, PAM, RFM
+✅ 깔끔한 한글 합성어 (3~5자): 단단한 매출 구조, 복리 자산 공식
 
-컨셉명 {method_name} 등장 위치: PART 1 마지막 소제목, PART 3 또는 4 안에 1곳, PART 5 마지막 소제목. 총 3번만.
-컨셉명의 글자 수나 단어 수를 단정하는 표현("세 글자", "단 한 단어") 절대 금지.
+[즉시 폐기 - 어색한 작명]
+❌ 어색한 한글: "월수도", "수익도", "월500", "월천만"
+❌ 영어 외래어 시스템 접미사: 파이프라인, 모듈, 엔진, 회로, 시너지, 매트릭스, 프레임워크
+   → "MDS 파이프라인" "ABC 모듈" 박는 즉시 탈락
+   ✅ 반드시 "○○○ 시스템 / 공식 / 구조 / 법칙" 중 하나로 끝낼 것
+❌ 설명체 컨셉명: "잠자는 동안 매출 굴러가는 시스템"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-절대 금지
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- "~하는 방법", "~의 중요성", "~란 무엇인가" — 교과서 목차
-- "결정적", "시그널", "게임이 달라진다", "다른 차원", "졸업" — AI 클리셰
-- "파이프라인", "엔진", "나침반", "눈덩이" — 유치한 비유
-- 콜론(:) 사용 금지
-- 25줄 전체에서 같은 단어·문장 끝 패턴 두 번 이상 반복 금지
-- 추상 명사에 물리 동사 금지: "복리가 굴러간다", "통장이 살아난다", "수익을 켠다"
-- 비유 명사를 '되다/안 되다' 대상으로 금지: "월세가 안 된다" → "월 100만원을 못 받는"
+위 받은 컨셉이 어색하면 룰에 맞게 새로 작명해서 사용해라.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-어법
+🧠 마케팅 뇌과학 8대 트리거 (목차 전체에 골고루 박을 것)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-출력 전 모든 줄을 소리내어 읽어라. 한국어 원어민이 한 번에 이해 못 하거나 어색한 줄은 자극을 줄이더라도 자연스럽게 바꿔라. 어법과 자극이 충돌하면 어법이 이긴다.
-"A는 ~, B는 ~" 대비 구조는 양쪽 서술어가 같은 축이어야 한다: "받고 ↔ 못 받는" (O), "받고 ↔ 못 쓰는" (X).
+1. **손해회피 + 충격 통계** — "1년 안에 99%가 다시 무너진다", "1억치 강의 들어도 망한다"
+2. **인지부조화/통념 박살** — "의지로 버틴 사람일수록 더 크게 무너진다", "노력할수록 가난해진다"
+3. **권위 어휘 (과학/임상)** — 뇌, 신경회로, N주 후, 임상, 데이터, 알고리즘 (절대 비유로 남용 금지, 사실 진술로만)
+4. **임박감 + 절대성** — "이 90초를 놓치면 며칠 걸린다", "다시는 ~하지 않는다"
+5. **정체성 전환 약속** — "회복한 뇌는 다시 무너지지 않는다", "단단해진 사람은 ~한다"
+6. **인그룹 사회증명** — "○○를 익힌 사람들의 5년 뒤", "상위 1%만 도달하는"
+7. **이중/삼중 보상** — "통장과 인간관계가 함께 변한다", "돈도 사람도 따라온다"
+8. **호기심 갭** — "두 달 안에 가장 먼저 끊은 한 가지", "정확히 어디부터 멈추는가"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-출력 형식
+🧲 호기심 갭(Information Gap) 강화 — 결제를 부르는 가장 강력한 무기
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PART 1. [챕터 제목]
-- [소제목]
-- [소제목]
-- [소제목]
-- [소제목]
-(PART 2~5 동일, 각 PART 소제목 정확히 4개)
+조지 로웬스타인의 정보격차 이론: 사람은 자기가 모르는 것이 '뭔지'는 알지만 '내용'은 모를 때 가장 강하게 끌린다. 25줄 중 최소 10줄에 이 갭을 박아야 목차만 보고 결제한다.
 
-목차 텍스트만 출력. 설명·주석·자가점검 결과 출력 금지."""
+[호기심 갭 6대 공식 - 결과만 보이고 방법/이유는 본문으로 미루기]
+
+1. **숫자 + 미공개 결과** — '정확히/딱'으로 시작해 결과만 보여주고 내용은 숨기기
+   ✅ "정확히 47일째에 통장이 처음 뒤집힌 그 순간"
+   ✅ "27만원짜리 첫 정산서가 알려준 단 한 가지"
+   ❌ "47일 만에 돈을 버는 방법" (방법을 다 보여줘버림 → 결제 안 함)
+
+2. **이미 벌어진 사건 + 원인 숨김** — '왜?'를 유발하는 결과만
+   ✅ "3년 차 베테랑이 신입에게 6개월 만에 따라잡힌 단 하나의 이유"
+   ✅ "월 1,000을 찍은 사람들이 가장 먼저 끊은 습관 한 가지"
+
+3. **묘하게 구체적인 행동/대상 + 이유 숨김** — 디테일이 호기심을 폭발시킨다
+   ✅ "성공한 부업러가 매일 밤 11시에 반드시 끄는 것"
+   ✅ "1년 만에 1억 모은 사람들이 절대 안 쓰는 5단어"
+   ✅ "월 500 넘긴 사람들 카톡 프로필에서 사라진 한 단어"
+
+4. **반대 결과 미스터리** — 통념과 정반대 결과만 던지고 메커니즘은 본문
+   ✅ "더 열심히 할수록 더 가난해진 7년의 비밀"
+   ✅ "잠을 늘렸더니 매출이 2배가 된 이상한 메커니즘"
+
+5. **'딱 하나' 절대성** — 수많은 변수 중 단 하나만 보여주기
+   ✅ "월 100 / 월 500을 가르는 단 한 줄의 차이"
+   ✅ "결국 모든 게 무너지는 사람들의 공통점 단 하나"
+
+6. **시간 압축 미스터리** — 짧은 시간에 큰 일이 일어났는데 그 사이를 숨기기
+   ✅ "퇴근 후 90분이 1년 뒤 인생을 갈라놓는다"
+   ✅ "주말 4시간이 5년치 월급을 바꾼 그 과정"
+
+[호기심 갭 만들 때 절대 어기지 말 것]
+• 답을 같은 줄에 다 보여주지 마라. "왜 ~한가" "어떻게 ~하는가"로 끝나면 본문을 사야 알 수 있게.
+• "방법" "비법" "노하우" 같은 말로 끝내면 갭이 닫힘 → 결제 안 함.
+• 결과/사건/디테일은 보이고, 원리/메커니즘/순서는 숨겨라.
+• 한 줄 안에 "장면 + 의문"이 같이 있어야 호기심이 작동한다.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 단 하나의 미션
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+5개 챕터 제목만 빠르게 이어 읽었을 때 한 사람의 변화 이야기가 보이고, 한 줄 한 줄이 다음 챕터를 못 참게 만들어야 한다.
+
+[컨셉명 등장 규칙 - 3번, 자연스럽게 분산]
+컨셉명은 챕터 제목에는 등장 X. 소제목에만 정확히 3번 자연스럽게 박는다.
+
+⚠️ 컨셉명 글자 수/단어 수를 단정하는 표현 절대 금지 (가장 자주 어기는 실수!)
+   ❌ "○○○ 세 글자에서 시작한다" — 컨셉명이 3글자 아니면 거짓말이 됨
+   ❌ "○○○ 네 글자만 기억하라" — 글자 수 단정 금지
+   ❌ "단 한 단어가 모든 걸 바꾼다" — 단어 수 단정 금지
+   ✅ 컨셉명이 'DPS'(3자)든 '단단한 매출 구조'(8자)든 '복리 자산 공식'(7자)이든 모두 자연스럽게 작동하는 문장만 사용
+
+[PART 1 마지막 소제목 - 도입] (아래 풀에서 1개 선택, 책에 가장 어울리는 것)
+   • "결국 모든 답은 '○○○' 안에 있었다"
+   • "이 책의 모든 페이지는 '○○○' 하나를 향해 간다"
+   • "지금부터 '○○○' 단 하나만 기억하면 된다"
+   • "여기서부터 진짜 이야기, '○○○'가 시작된다"
+   • "마지막에 도달하는 곳은 결국 '○○○'다"
+   • "'○○○'를 만나기 전과 후는 완전히 다른 게임이다"
+   • "이 모든 혼란을 한 줄로 정리하는 '○○○'"
+
+[PART 3 또는 PART 4 안 1곳 - 작동·전환점]
+   • "○○○가 본격 작동하기 시작하는 4가지 신호"
+   • "○○○를 처음 적용한 사람들이 가장 먼저 느낀 변화"
+   • "○○○가 통장에 처음 흔적을 남기는 순간"
+   • "○○○ 한 달 차에 가장 먼저 무너지는 한 가지"
+
+[PART 5 마지막 소제목 - 확장·사회증명]
+   • "○○○를 익힌 사람들의 5년 뒤가 완전히 다른 이유"
+   • "○○○로 자리잡은 사람들이 다시는 돌아가지 않는 이유"
+   • "○○○ 이후, 1년 만에 가장 크게 달라지는 단 한 가지"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📐 챕터 제목 형식 (가장 중요)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[형식]
+- 13~18자의 자연스러운 한국어 한 문장
+- 단어 한두 개짜리 라벨 금지, 라벨 분리(— ㅣ :) 금지
+- 평서문 또는 단언형. "~이유"로 끝나는 설명체는 한 PART에만 사용
+- 명사 엔딩과 동사 엔딩을 챕터별로 섞어라 (5개 모두 명사 엔딩 금지)
+- 5개를 이으면 [좌절 → 통념 박살 → 첫 사건 → 안정화 → 도약]의 5막
+
+[좋은 예 - 성공적인 멘탈 관리 비결]
+PART 1. 1년 안에 99%가 다시 무너지는 결정적 이유
+PART 2. 의지로 잡으려는 순간 뇌는 반대로 움직인다
+PART 3. 회복의 8할이 결판나는 폭발 직후 90초
+PART 4. 한 번 회복한 뇌는 다시는 무너지지 않는다
+PART 5. 단단해진 멘탈은 인생을 통째로 바꾼다
+
+[좋은 예 - 30대 직장인 N잡 월 500]
+PART 1. 직장인 99%가 부업 30일을 못 버티는 이유
+PART 2. 노력보다 자리가 먼저다
+PART 3. 첫 30만원이 통장에 찍힌 그날
+PART 4. 새벽 3시에도 매출이 들어온다
+PART 5. 월 500 다음, 억대 수익으로 가는 길
+
+[나쁜 예 - 즉시 폐기]
+- "발굴", "폭로", "전환" 같은 한두 단어짜리
+- "발굴 — 부업의 90%는 첫 단추에서 망한다" (라벨 + 대시)
+- "DPS의 첫 관문, 노력 없이도 돈이 따라오는 자리를 찾는 법" (시스템명 라벨화 + 너무 김)
+- "이제 무너지는 게 더 이상 사건이 아니다" (사건이 아니다 ← 말이 안 됨)
+- "한 번 흔들려도 다음 날엔 흔적도 없다" (AI식 과장)
+- "월수도 시스템의 첫 설계" (의미 불명 + 설계라는 설명체 어휘)
+- "MDS 파이프라인" (파이프라인이라는 영어 외래어를 시스템 접미사로)
+- "주가 -12% 떨어져도 매도 안 하는 뇌 회로가 박혔다" (뇌 회로가 박히다 = 어법 어색, 비유 남용)
+- "신경회로가 새로 깔리고 있다는 신호" 류 (한 번까진 OK, 같은 비유 두 번 X)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✍️ 소제목 톤: 한국 자기계발 베스트셀러 + 마케팅 뇌과학
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+각 PART당 소제목 4개. 모두 다른 패턴 + 명사·동사 엔딩 섞기 (4개 모두 같은 엔딩 금지).
+
+[좋은 패턴 풀 - 매번 다르게]
+1. 통계 충격형 — "1년 안에 99%가 다시 무너진다", "한 달 차에 90%가 다시 무너지는 정확한 이유"
+2. 인지부조화형 — "의지로 버틴 사람일수록 더 크게 무너진다"
+3. 뇌과학 권위형 — "감정이 폭발할 때 뇌는 정확히 어디부터 멈추는가", "신경회로가 새로 깔리고 있다는 4가지 신호"
+4. 임박감/손해회피형 — "이 90초를 놓치면 다시 일어서는 데 며칠이 걸린다"
+5. 정체성 전환형 — "한 번 회복한 뇌는 다시는 무너지지 않는다"
+6. 호기심 갭형 — "단번에 회복한 사람들이 모두 무의식적으로 하는 행동"
+7. 이중/삼중 보상형 — "회복 후 6개월 만에 통장과 인간관계가 함께 변한다"
+8. 인그룹 사회증명형 — "○○를 익힌 사람들의 5년 뒤가 완전히 다른 이유"
+
+[자연스러움 원칙 - 절대 어기지 말 것]
+- 어법 검사: 주어와 동사가 자연스럽게 연결되는가? ("회복이 굴러간다" X — 회복은 안 굴러감)
+- 추상 명사 의인화 금지: "○○가 멈춘다", "○○가 굴러간다", "○○ 위에 얹는다" (시스템/회복 같은 추상 명사를 사람/물건처럼)
+- 과장 형용사 금지: "흔적도 없다", "통째로", "완전히" (꼭 필요할 때만)
+- 추상 X, 구체 O: "많은 사람" → "월급 280만원짜리 7년차 회사원"
+- 도구/플랫폼명 적극: 네이버, 카카오, 노션, 카톡, 캘린더, 구글 시트
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 즉시 폐기 표현
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+특정 작가 고유어 (절대 금지): 자청 / 역행자 / 자의식 해체 / 유전자 역행 / 원시인 / 추월차선 / 아토믹 해빗 / 언카피어블
+AI 클리셰: 졸업 / 정체 / 마지막 한 수 / 다른 차원 / 결정적 시그널 / 진짜 게임 / 흔적도 없다 / 사건이 아니다 / 회로가 박혔다
+시스템 의인화: "○○가 멈춘 날", "○○ 위에 얹다", "○○를 졸업한", "회복이 굴러가다"
+뇌과학 비유 남용: "뇌 회로가 박혔다", "뇌 회로가 새로 깔린다" (전체 목차에 뇌·신경회로는 사실 진술로 1~2회만, 비유 남용 X)
+밍밍: 효과적인 / 성공적인 / ~의 모든 것 / ~하는 방법 / 알아야 할 / 의 중요성
+유치 비유: 나침반 / 열쇠 / 보물 / 황금 / 마법 / 파이프라인 / 엔진 / 톱니바퀴 / 사이클 / 눈덩이
+참고서: 첫걸음 / 완벽가이드 / 핵심정리 / 기초/중급/고급 / 첫 설계 / 첫 셋업
+챕터 제목 라벨: "발굴 —", "1단계:", "STEP 1." 같은 분리 형식
+의문문 문어체: "왜 ~는 ~하지 못하는가" 식의 한 PART에 1개까지만
+콜론(:) — 단 한 번도 쓰지 마라
+숫자 중복 금지: 전체 목차에서 같은 숫자(예: 3시간 + 3개월) 두 번 등장 금지
+숫자 표기 - 부호 금지: "-12%" "+30%" 같은 부호 사용 X. "12% 폭락에도", "30% 상승하면" 식으로
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 출력 형식 (이 형식 외 어떤 텍스트도 출력 금지)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PART 1. [13~18자, 좌절 + 통계 충격]
+- [통계 충격 또는 결정적 함정형]
+- [인지부조화/통념 박살형]
+- [패턴 - 위 8개 중 다른 것]
+- [컨셉명 첫 등장: 자연스러운 도입]
+
+PART 2. [13~18자, 통념 박살 + 뇌과학 권위]
+- [패턴]
+- [패턴 - 다른 것]
+- [패턴 - 또 다른 것]
+- [패턴 - 또 다른 것]
+
+PART 3. [13~18자, 첫 사건/결정적 순간]
+- [패턴]
+- [임박감/손해회피형]
+- [패턴]
+- [컨셉명 등장 가능: "○○○를 처음 적용한 사람들이 가장 먼저 느낀 변화" — PART 4에 넣을 거면 여기는 일반 패턴]
+
+PART 4. [13~18자, 정체성 전환 선언]
+- [컨셉명 등장 가능: "○○○가 본격 작동하는 4가지 신호" — PART 3에 안 넣었다면 여기에]
+- [뇌과학 권위형 또는 통계형]
+- [패턴]
+- [패턴]
+
+PART 5. [13~18자, 도약/이중 보상]
+- [호기심 갭형]
+- [이중/삼중 보상형]
+- [패턴 - 또 다른 것]
+- [컨셉명 세 번째 등장: 인그룹 사회증명]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 출력 전 자가 점검 (반드시 통과)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+출력 직전에 5가지 모두 통과해야 한다. 하나라도 No면 다시 써라.
+
+체크 1. 5개 챕터 제목만 이어 읽었을 때 "X였던 사람이 Y로 바뀐다"는 변화 서사가 또렷한가?
+체크 2. 통념 박살(인지부조화) 패턴이 5개 챕터+20개 소제목 안에 3개 이상 박혀있는가?
+체크 3. 구체적 숫자(시간/금액/비율)가 8개 이상 등장하는가?
+체크 4. 평이한 표현("~의 방법", "~의 모든 것", "~의 중요성", "효과적인", "성공적인")이 0개인가?
+체크 5. 5초간 훑어본 가상 독자가 "이건 안 사면 손해"라고 느낄 만한 손실회피 트리거가 챕터 제목 5개 중 2개 이상에 있는가?
+체크 6. 호기심 갭(결과만 보이고 방법/이유는 숨김)이 20개 소제목 중 10개 이상에 박혀 있는가? — "결과만 보이는데 본문을 사야 알 수 있는 한 줄"이 절반 이상이어야 결제 전환됨.
+체크 7. 컨셉명 글자 수를 단정하는 표현("세 글자", "네 글자", "단 한 단어")이 단 하나도 없는가? — 하나라도 있으면 즉시 전체 다시 쓰기.
+
+목차만 출력. 콜론 금지. 매 소제목 다른 패턴. 명사·동사 엔딩 섞기. 어법 어색한 표현 즉시 폐기. 각 PART는 정확히 소제목 4개. 컨셉명 글자수 단정 금지. 자가점검 결과는 출력하지 말 것."""
+
+        chapters = []
+        subtopics = {}
         for _outline_attempt in range(2):
-            outline_result = ask_ai(outline_prompt, 0.92, ensure_quality=True)
+            outline_result = ask_ai(outline_prompt, 0.85, ensure_quality=True)
             if not outline_result:
                 continue
 
@@ -3245,6 +3201,9 @@ PART 1. [챕터 제목]
                 break
 
         if chapters:
+            # 교정 패스: 후킹은 유지하고 어색한 표현만 자연스럽게
+            progress_placeholder.info("✨ 목차 표현 다듬는 중... (어법/자연스러움 교정)")
+            chapters, subtopics = polish_outline(chapters, subtopics, topic)
             st.session_state['outline'] = chapters
             st.session_state['chapters'] = {}
             for ch in chapters:
@@ -3426,14 +3385,31 @@ def generate_body_from_outline(interview_data, progress_placeholder):
             progress_placeholder.error("먼저 목차를 생성해주세요.")
             return False
 
+        # API 사전 점검 — 키/패키지/연결 문제를 시작 전에 표면화
+        if not get_api_key():
+            progress_placeholder.error("❌ Claude API 키가 없습니다. 사이드바에서 API 키를 입력해주세요.")
+            return False
+        progress_placeholder.info("🔌 Claude API 연결 확인 중...")
+        if ask_ai("OK라고 한 단어로만 답하세요.", 0.0) is None:
+            progress_placeholder.error("❌ Claude API 호출 실패. API 키/크레딧/모델 설정을 확인해주세요. (위에 표시된 오류 메시지 참고)")
+            return False
+
         # 본문 생성
         total_subtopics = sum(len(st.session_state['chapters'][ch]['subtopics']) for ch in st.session_state['outline'])
         done = 0
+        failed = []
 
         for ch in st.session_state['outline']:
             ch_data = st.session_state['chapters'][ch]
+            if 'subtopic_data' not in ch_data:
+                ch_data['subtopic_data'] = {}
             for sub in ch_data['subtopics']:
                 done += 1
+                if sub not in ch_data['subtopic_data']:
+                    ch_data['subtopic_data'][sub] = {'questions': [], 'answers': [], 'content': ''}
+                # 이미 생성된 본문은 건너뛰기 (실패/중단 후 재시도 시 이어쓰기)
+                if ch_data['subtopic_data'][sub].get('content'):
+                    continue
                 progress_placeholder.info(f"✍️ 본문 작성 중... ({done}/{total_subtopics}) - {sub[:20]}...")
 
                 # 이전 소제목들의 내용 요약 (중복 방지용)
@@ -3508,12 +3484,9 @@ def generate_body_from_outline(interview_data, progress_placeholder):
 챕터: {ch}
 소제목: {sub}
 핵심 방법론: {interview_data.get('core_method', '')}
-저자의 구체적 노하우·실전 디테일(★ 본문에 적극 활용 — 수치·사례·단계·실수·기준·도구를 이 소제목에 맞게 녹여라): {interview_data.get('detailed_knowhow', '') or '(미입력)'}
 
 [책 컨셉]
 {book_concept}
-
-이 책의 기법 이름은 "{st.session_state.get('method_name', '')}"으로 확정됨. 본문에서 기법을 언급할 때 반드시 이 이름 그대로 사용(약자 풀어쓰기·재작명 금지).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✍️ 본문 톤: 자기계발 후킹 + 권석천 칼럼 깊이
@@ -3561,50 +3534,18 @@ def generate_body_from_outline(interview_data, progress_placeholder):
 ❌ 억지 메타포: 순환법, 엔진, 고리, 파이프라인, 톱니바퀴
 ❌ AI스러운: 중요합니다, 따라서, 결론적으로, ~를 통해, 다양한, 효과적인, 진정한
 ❌ 형식: 1. 2. 첫째, 둘째, 글머리 기호, 이모지
+❌ HTML 태그나 표 사용 금지
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 표는 '필요할 때만' (강제 아님)
+📏 분량: 1800~2200자
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- 비교(전/후, A안/B안), 단계별 정리, 수치 묶음처럼 표로 보여주면 확 명확해지는 내용이 있을 때만 표 1개를 넣어라.
-- 그런 내용이 없으면 표를 넣지 마라. 모든 소제목에 표가 있을 필요 없다(대략 3개 중 1개 정도가 자연스럽다).
-- 표 형식은 반드시 아래 마크다운 파이프 형식. 첫 줄이 헤더다. (HTML 태그 금지)
-  | 구분 | 기존 방식 | 새로운 방식 |
-  | 비용 | 월 30만원 | 월 0원 |
-  | 시간 | 하루 3시간 | 하루 30분 |
-- 표 앞뒤로는 반드시 설명 문단을 둔다. 표만 툭 던지지 마라.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 몰입·충격 어조 (자청식 몰입감 — 특정 작가 고유어는 제외)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- 도입부터 통념을 정면으로 깬다. 독자가 "어, 내가 알던 거랑 반대네" 하고 멈칫하게.
-- 글 중간마다 '작은 충격'을 심어라: 예상과 반대되는 사실, 뒤집히는 데이터, 의외의 결론.
-- 한 호흡에 읽히는 리듬 — 짧은 단정문으로 치고, 긴 문장으로 풀고, 다시 끊는다.
-- "왜?"를 계속 만들어 다음 문단을 안 읽고는 못 배기게 한다(궁금증 갭).
-- 충격 뒤엔 반드시 '그래서 무엇을 어떻게'의 실질이 온다. 겁만 주고 끝내지 않는다.
-- 자청·역행자 등 특정 작가의 '단어'는 절대 쓰지 않는다. 몰입감과 태도만 가져온다.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎓 전문성 (아마추어 글과 가르는 지점)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- 추상 주장 1개당 근거 1개(데이터·연구·구체 사례·숫자)를 반드시 붙인다.
-- 메커니즘을 설명하라. "왜 그렇게 되는가"의 원리와 과정을 단계로 풀어라.
-- 바로 따라 할 수 있게: 무엇을·어디서·어떤 순서로·얼마나, 구체적으로.
-- 흔한 조언의 한계를 짚고, 더 정확한 기준·예외를 제시한다(깊이의 증거).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📏 분량: 2400~3000자 (최소 2400자 이상, 전문성 있는 밀도로)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️ 길이는 사례·데이터·단계별 설명·메커니즘으로 채운다. 같은 말 반복·미사여구로 늘리면 즉시 실패.
 
 '{sub}' 본문 작성.
 - 시작: {current_hook_style}
 - 이전 내용과 완전히 다른 새로운 이야기
 - 권석천 칼럼처럼 사실 → 분석 → 통찰 순서로 인과를 추적
 - 마지막 한 줄에 발견된 통찰 하나
-- 표가 정말 도움이 되는 내용이면 위 마크다운 파이프 형식으로 1개까지 넣어도 됨(아니면 넣지 말 것)
+- 순수 텍스트만 (HTML/표 금지)
 
 ⛔ 절대 금지: 본문 첫 줄에 소제목('{sub}')을 다시 쓰지 마라.
    소제목은 위에 이미 표시되므로, 본문은 곧장 첫 후킹 문장으로 시작한다.
@@ -3612,40 +3553,25 @@ def generate_body_from_outline(interview_data, progress_placeholder):
    ✅ 올바름: "그날 새벽 두 시였습니다..." (바로 본문 시작)"""
 
                 content = ask_ai(content_prompt, 0.7, ensure_quality=True)
+                if not content:
+                    # 1회 자동 재시도
+                    progress_placeholder.info(f"🔄 재시도 중... ({done}/{total_subtopics}) - {sub[:20]}...")
+                    content = ask_ai(content_prompt, 0.7, ensure_quality=True)
                 if content:
                     content = clean_content(content, subtopic=sub)  # 이모티콘/마크다운 제거 + 소제목 중복 제거
                     ch_data['subtopic_data'][sub]['content'] = content
+                else:
+                    failed.append(sub)
 
-            # ── 챕터 끝: 핵심 정리(key_points) 생성 ──
-            try:
-                chapter_text = ""
-                for s in ch_data['subtopics']:
-                    c = ch_data.get('subtopic_data', {}).get(s, {}).get('content', '')
-                    if c:
-                        chapter_text += f"\n[{s}]\n{c[:600]}\n"
-                if chapter_text.strip():
-                    summary_prompt = f"""다음은 책 한 챕터의 본문이다. 이 챕터에서 독자가 반드시 기억해야 할 핵심을 3~4개로 정리하라.
+        # 완료 처리 — 실패가 있으면 성공으로 위장하지 않음
+        if failed:
+            names = ', '.join(failed[:5]) + ('...' if len(failed) > 5 else '')
+            progress_placeholder.error(
+                f"⚠️ {len(failed)}개 소제목 본문 생성 실패: {names}\n\n"
+                f"이미 완성된 본문은 저장되어 있습니다. '✍️ 본문 생성하기'를 다시 누르면 실패한 부분만 재생성합니다."
+            )
+            return False
 
-[챕터 제목]: {ch}
-[본문 발췌]
-{chapter_text[:3000]}
-
-규칙:
-- 각 항목은 한 문장(공백 포함 45자 이내), 자연스러운 한국어 평서문.
-- 추상적 구호 금지. 본문에서 실제로 다룬 구체적 통찰·행동을 요약.
-- 번호·기호·이모지 없이 문장만.
-
-JSON만 출력: {{"points": ["...", "...", "..."]}}"""
-                    sres = ask_ai(summary_prompt, 0.5)
-                    sparsed = parse_json(sres) if sres else None
-                    pts = (sparsed or {}).get('points', []) if sparsed else []
-                    pts = [p.strip() for p in pts if isinstance(p, str) and p.strip()][:4]
-                    if pts:
-                        ch_data['key_points'] = pts
-            except Exception:
-                pass
-
-        # 완료 처리
         st.session_state['interview_completed'] = True
         progress_placeholder.success("✅ 본문 생성 완료!")
         return True
@@ -4123,101 +4049,282 @@ def generate_outline(topic, persona, pains, gaps=None):
     else:
         gaps_block = ""
 
-    # 같은 책이면 기존 영문 기법 이름 재사용, 없으면 새로(고유) 생성
-    method_name = get_or_create_method_name(topic, None, force_new=False)
-    method_expansion = st.session_state.get('method_expansion', '')
+    prompt = f"""당신은 한국 자기계발 분야 톱 0.1% 기획자입니다. 서점에서 단 5초간 목차만 본 사람이 책을 손에서 못 놓게 만드는 5장짜리 목차를 씁니다.
 
-    # 저자가 입력한 구체적 노하우 (세션에서 가져오기)
-    _iv = st.session_state.get('interview_data') or st.session_state.get('temp_interview') or {}
-    _knowhow = (_iv.get('detailed_knowhow', '') or '').strip()
-    knowhow_block = (
-        f"\n[저자의 구체적 노하우·실전 디테일 (★ 목차에 자연스럽게 녹여라)]\n{_knowhow}\n"
-        "→ 위 노하우의 구체적 수치·단계·실수·기준·도구를 소제목에 녹여 저자만의 디테일이 느껴지게 하되, 그대로 베끼지 말고 호기심 유발 제목으로 재가공한다.\n"
-    ) if _knowhow else ""
+목차의 단 하나의 목적: 독자가 "이 책을 안 읽으면 평생 손해"라고 느끼게 만드는 것.
+정보 전달은 본문이 한다. 목차는 100% 구매심리만 다룬다.
 
-    prompt = f"""너는 한국 자기계발 전자책 시장에서 목차만 보고 독자가 결제하게 만드는 카피라이터다.
-
-[책 정보]
-주제: {topic}
-{persona_block}{pains_block}{knowhow_block}
-컨셉명: {method_name}
-{"컨셉 약자 풀이: " + method_expansion if method_expansion else ""}
-
+[주제]: {topic}
+{persona_block}{pains_block}{gaps_block}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-목차가 팔리는 단 하나의 원리
+🛒 구매 결정 5초 룰 (모든 규칙 중 1순위)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-독자는 목차를 5초 훑는다. 그 5초 안에 "어? 이거 딱 내 얘기인데"라는 한 문장이 떠올라야 결제한다.
-방법을 알려주는 목차는 안 팔린다. 독자의 현실을 정확히 짚어서 불안하게 만드는 목차가 팔린다.
+독자는 목차를 5초만 본다. 그 5초 안에 다음 3가지가 동시에 작동해야 결제한다.
+
+[1] 정체성 변화 발견 — "이걸 읽으면 나는 OO한 사람이 된다"
+   → 5개 챕터 제목을 이어 읽으면 한 사람의 결정적 변화가 보여야 한다.
+   ✅ "단단해진 멘탈은 인생을 통째로 바꾼다" (변화 서사 O)
+   ❌ "멘탈 관리의 다양한 기법" (정체성 변화 X — 즉시 폐기)
+
+[2] 손실회피 작동 — "이걸 모르면 평생 OO한다"
+   → 통념 박살(인지부조화) 챕터/소제목이 최소 3개 들어가야 한다.
+   ✅ "의지로 버틴 사람일수록 더 크게 무너진다"
+   ❌ "멘탈 관리의 중요성" (잃을 게 안 보임)
+
+[3] 구체성 — 추상 명사 1개당 구체적 숫자/장면 1개
+   → "많은 사람" 금지, "월급 280만원짜리 7년차 회사원" 가능
+   → 시간(90초, 47일), 금액(34만원, 1억), 비율(99%, 8할) 적극 사용
+
+25줄(챕터 5 + 소제목 20) 중 한 줄이라도 "그냥 정보"가 섞이면 그 목차는 평이해진다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-딱 3가지 무기만 써라
+🧠 마케팅 뇌과학 8대 트리거 (목차 전체에 골고루 박을 것)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-① 독자 행동 직접 저격
-독자가 지금 실제로 하고 있는 행동·습관·변명을 정확히 집어내라. 독자가 어제 한 행동을 보여서 "이 저자가 나를 알고 있다"고 느끼게 만드는 것이 가장 강한 무기다.
-- "퇴사 준비를 3년째 하고 있는데 통장은 그대로인 이유"
-- "강의를 50개 들었는데 수입은 그대로인 사람들의 공통점"
-- "증권사 앱을 하루 세 번 이상 열어본 해에 수익률이 가장 낮았다"
-→ [독자가 지금 느끼는 통증]을 읽고, 그 독자가 오늘 실제로 한 행동 중 가장 뜨끔한 것 5개 이상 목차에 박아라.
-
-② 통념 박살
-독자가 맞다고 믿는 것을 정반대로 뒤집어라. "내 탓이 아니었다"는 안도와 충격이 동시에 와야 결제한다.
-- "부지런한 사람일수록 더 빨리 나가떨어진다"
-- "의지로 버틴 사람일수록 더 크게 무너진다"
-- "열심히 할수록 오히려 가난해지는 사람의 패턴"
-→ 25줄 중 최소 5줄은 독자가 "어? 그럼 내가 틀린 건가?"라고 멈추게 만들어라.
-
-③ 장면+숫자로 방법은 숨기기
-결과 장면은 보여주되 방법·이유는 본문에 숨겨라. 답을 같은 줄에 다 보여주면 결제 안 한다.
-- "정확히 47일째, 통장 잔고가 처음으로 불어난 그 순간" (왜·어떻게는 본문)
-- "1년 만에 사직서를 낸 사람들의 마지막 한 달이 닮은 이유"
-- "월 100을 넘긴 사람들이 가장 먼저 끊은 습관 하나"
-→ 소제목에는 구체적 숫자(금액·기간·비율·인원)를 절반 이상 넣어라.
+1. **손해회피 + 충격 통계** — "1년 안에 99%가 다시 무너진다", "1억치 강의 들어도 망한다"
+2. **인지부조화/통념 박살** — "의지로 버틴 사람일수록 더 크게 무너진다", "노력할수록 가난해진다"
+3. **권위 어휘 (과학/임상)** — 뇌, 신경회로, N주 후, 임상, 데이터, 알고리즘
+4. **임박감 + 절대성** — "이 90초를 놓치면 며칠 걸린다", "다시는 ~하지 않는다"
+5. **정체성 전환 약속** — "회복한 뇌는 다시 무너지지 않는다", "단단해진 사람은 ~한다"
+6. **인그룹 사회증명** — "○○를 익힌 사람들의 5년 뒤", "상위 1%만 도달하는"
+7. **이중/삼중 보상** — "통장과 인간관계가 함께 변한다", "돈도 사람도 따라온다"
+8. **호기심 갭** — "두 달 안에 가장 먼저 끊은 한 가지", "정확히 어디부터 멈추는가"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-구조 규칙
+🧲 호기심 갭(Information Gap) 강화 — 결제를 부르는 가장 강력한 무기
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-5개 PART 제목을 세로로 이어 읽으면 한 사람의 이야기가 보여야 한다:
-PART 1 (바닥: 지금 이러고 있지?) → PART 2 (왜: 네 탓이 아니었다) → PART 3 (전환: 처음 달라진 그 순간) → PART 4 (변화: 이제 다른 사람이 됐다) → PART 5 (도약: 1년 뒤 완전히 다른 인생)
+조지 로웬스타인의 정보격차 이론: 사람은 자기가 모르는 것이 '뭔지'는 알지만 '내용'은 모를 때 가장 강하게 끌린다. 25줄 중 최소 10줄에 이 갭을 박아야 목차만 보고 결제한다.
 
-컨셉명 {method_name} 등장 위치: PART 1 마지막 소제목, PART 3 또는 4 안에 1곳, PART 5 마지막 소제목. 총 3번만.
-컨셉명의 글자 수나 단어 수를 단정하는 표현("세 글자", "단 한 단어") 절대 금지.
+[호기심 갭 6대 공식 - 결과만 보이고 방법/이유는 본문으로 미루기]
+
+1. **숫자 + 미공개 결과** — '정확히/딱'으로 시작해 결과만 보여주고 내용은 숨기기
+   ✅ "정확히 47일째에 통장이 처음 뒤집힌 그 순간"
+   ✅ "27만원짜리 첫 정산서가 알려준 단 한 가지"
+   ❌ "47일 만에 돈을 버는 방법" (방법을 다 보여줘버림 → 결제 안 함)
+
+2. **이미 벌어진 사건 + 원인 숨김** — '왜?'를 유발하는 결과만
+   ✅ "3년 차 베테랑이 신입에게 6개월 만에 따라잡힌 단 하나의 이유"
+   ✅ "월 1,000을 찍은 사람들이 가장 먼저 끊은 습관 한 가지"
+
+3. **묘하게 구체적인 행동/대상 + 이유 숨김** — 디테일이 호기심을 폭발시킨다
+   ✅ "성공한 부업러가 매일 밤 11시에 반드시 끄는 것"
+   ✅ "1년 만에 1억 모은 사람들이 절대 안 쓰는 5단어"
+   ✅ "월 500 넘긴 사람들 카톡 프로필에서 사라진 한 단어"
+
+4. **반대 결과 미스터리** — 통념과 정반대 결과만 던지고 메커니즘은 본문
+   ✅ "더 열심히 할수록 더 가난해진 7년의 비밀"
+   ✅ "잠을 늘렸더니 매출이 2배가 된 이상한 메커니즘"
+
+5. **'딱 하나' 절대성** — 수많은 변수 중 단 하나만 보여주기
+   ✅ "월 100 / 월 500을 가르는 단 한 줄의 차이"
+   ✅ "결국 모든 게 무너지는 사람들의 공통점 단 하나"
+
+6. **시간 압축 미스터리** — 짧은 시간에 큰 일이 일어났는데 그 사이를 숨기기
+   ✅ "퇴근 후 90분이 1년 뒤 인생을 갈라놓는다"
+   ✅ "주말 4시간이 5년치 월급을 바꾼 그 과정"
+
+[호기심 갭 만들 때 절대 어기지 말 것]
+• 답을 같은 줄에 다 보여주지 마라. "왜 ~한가" "어떻게 ~하는가"로 끝나면 본문을 사야 알 수 있게.
+• "방법" "비법" "노하우" 같은 말로 끝내면 갭이 닫힘 → 결제 안 함.
+• 결과/사건/디테일은 보이고, 원리/메커니즘/순서는 숨겨라.
+• 한 줄 안에 "장면 + 의문"이 같이 있어야 호기심이 작동한다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-절대 금지
+🎯 단 하나의 미션
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- "~하는 방법", "~의 중요성", "~란 무엇인가" — 교과서 목차
-- "결정적", "시그널", "게임이 달라진다", "다른 차원", "졸업" — AI 클리셰
-- "파이프라인", "엔진", "나침반", "눈덩이" — 유치한 비유
-- 콜론(:) 사용 금지
-- 25줄 전체에서 같은 단어·문장 끝 패턴 두 번 이상 반복 금지
-- 추상 명사에 물리 동사 금지: "복리가 굴러간다", "통장이 살아난다", "수익을 켠다"
-- 비유 명사를 '되다/안 되다' 대상으로 금지: "월세가 안 된다" → "월 100만원을 못 받는"
+5개 챕터 제목만 빠르게 이어 읽었을 때 한 사람의 변화 이야기가 보이고, 한 줄 한 줄이 다음 챕터를 못 참게 만들어야 한다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-어법
+📐 챕터 제목 형식 (가장 중요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-출력 전 모든 줄을 소리내어 읽어라. 한국어 원어민이 한 번에 이해 못 하거나 어색한 줄은 자극을 줄이더라도 자연스럽게 바꿔라. 어법과 자극이 충돌하면 어법이 이긴다.
-"A는 ~, B는 ~" 대비 구조는 양쪽 서술어가 같은 축이어야 한다: "받고 ↔ 못 받는" (O), "받고 ↔ 못 쓰는" (X).
+[형식]
+- 13~18자의 자연스러운 한국어 한 문장
+- 단어 한두 개짜리 라벨 금지, 라벨 분리(— ㅣ :) 금지
+- 평서문 또는 단언형. "~이유"로 끝나는 설명체는 한 PART에만 사용
+- 명사 엔딩과 동사 엔딩을 챕터별로 섞어라 (5개 모두 명사 엔딩 금지)
+- 5개를 이으면 [좌절 → 통념 박살 → 첫 사건 → 안정화 → 도약]의 5막
+
+[좋은 예 - 성공적인 멘탈 관리 비결]
+PART 1. 1년 안에 99%가 다시 무너지는 결정적 이유
+PART 2. 의지로 잡으려는 순간 뇌는 반대로 움직인다
+PART 3. 회복의 8할이 결판나는 폭발 직후 90초
+PART 4. 한 번 회복한 뇌는 다시는 무너지지 않는다
+PART 5. 단단해진 멘탈은 인생을 통째로 바꾼다
+
+[좋은 예 - 30대 직장인 N잡 월 500]
+PART 1. 직장인 99%가 부업 30일을 못 버티는 이유
+PART 2. 노력보다 자리가 먼저다
+PART 3. 첫 30만원이 통장에 찍힌 그날
+PART 4. 새벽 3시에도 매출이 들어온다
+PART 5. 월 500 다음, 억대 수익으로 가는 길
+
+[나쁜 예 - 즉시 폐기]
+- "발굴", "폭로", "전환" 같은 한두 단어짜리
+- "발굴 — 부업의 90%는 첫 단추에서 망한다" (라벨 + 대시)
+- "DPS의 첫 관문, 노력 없이도 돈이 따라오는 자리를 찾는 법" (시스템명 라벨화 + 너무 김)
+- "이제 무너지는 게 더 이상 사건이 아니다" (사건이 아니다 ← 말이 안 됨)
+- "한 번 흔들려도 다음 날엔 흔적도 없다" (AI식 과장)
+- "월수도 시스템의 첫 설계" (의미 불명 + 설계라는 설명체 어휘)
+- "MDS 파이프라인" (파이프라인이라는 영어 외래어를 시스템 접미사로)
+- "주가 -12% 떨어져도 매도 안 하는 뇌 회로가 박혔다" (뇌 회로가 박히다 = 어법 어색, 비유 남용)
+- "신경회로가 새로 깔리고 있다는 신호" 류 (한 번까진 OK, 같은 비유 두 번 X)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-출력 형식
+💎 책의 시그니처 컨셉 (필수) - 작명 규칙 엄격
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PART 1. [챕터 제목]
-- [소제목]
-- [소제목]
-- [소제목]
-- [소제목]
-(PART 2~5 동일, 각 PART 소제목 정확히 4개)
+먼저 책의 시그니처 컨셉명을 하나 만든다.
 
-목차 텍스트만 출력. 설명·주석·자가점검 결과 출력 금지."""
+[좋은 컨셉명 형식]
+✅ 영문 3~4자 약어 (반드시 발음 가능 + 의미 있어야 함):
+   - DPS (Discover-Plug-Scale), ARC (Awareness-Reset-Control)
+   - PAM (Prompt-Automate-Monetize), RFM (Recency-Frequency-Monetary)
+   - BTS, TRE, KFC, ZAP 식의 강한 자음 조합
 
-    return ask_ai(prompt, 0.92, ensure_quality=True)
+✅ 깔끔한 한글 합성어 (3~5자):
+   - 복리 자산 공식, 단단한 매출 구조, 안전 마진 법칙
+
+[즉시 폐기 - 어색한 작명]
+❌ 의미·발음이 어색한 한글:
+   - "월수도", "수익도", "월500", "월천만", "부자도" (의미가 바로 안 잡히는 한글)
+❌ 시스템 접미사로 영어 외래어 사용:
+   - 파이프라인, 모듈, 엔진, 회로, 시너지, 매트릭스, 어레이, 클러스터, 프레임워크, 인프라
+   → "MDS 파이프라인" "ABC 모듈" "XYZ 엔진" 같이 박는 즉시 탈락
+   ✅ 반드시 "○○○ 시스템 / 공식 / 구조 / 법칙" 중 하나로 끝낼 것
+❌ 단어가 길거나 너무 직설적인 한글 합성:
+   - "잠자는 동안 매출 굴러가는 시스템" (설명체)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 컨셉명 등장 규칙 - 3번, 자연스럽게 분산
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+이 컨셉명을 5개 PART 안에 정확히 3곳에 등장시킨다:
+
+⚠️ 컨셉명 글자 수/단어 수를 단정하는 표현 절대 금지 (가장 자주 어기는 실수!)
+   ❌ "○○○ 세 글자에서 시작한다" — 컨셉명이 3글자 아니면 거짓말이 됨
+   ❌ "○○○ 네 글자만 기억하라" — 글자 수 단정 금지
+   ❌ "단 한 단어가 모든 걸 바꾼다" — 단어 수 단정 금지
+   ✅ 컨셉명이 'DPS'(3자)든 '단단한 매출 구조'(8자)든 '복리 자산 공식'(7자)이든 모두 자연스럽게 작동하는 문장만 사용
+
+1. **PART 1 마지막 소제목** (도입) — 아래 풀에서 1개 선택, 컨셉명 글자 수와 무관하게 자연스러운 것
+   - 예: "결국 모든 답은 '○○○' 안에 있었다"
+   - 예: "이 책의 모든 페이지는 '○○○' 하나를 향해 간다"
+   - 예: "지금부터 '○○○' 단 하나만 기억하면 된다"
+   - 예: "여기서부터 진짜 이야기, '○○○'가 시작된다"
+   - 예: "마지막에 도달하는 곳은 결국 '○○○'다"
+   - 예: "'○○○'를 만나기 전과 후는 완전히 다른 게임이다"
+
+2. **PART 3 또는 PART 4 안 (1곳)** (작동·전환점)
+   - 예: "○○○가 본격 작동하기 시작하는 4가지 신호"
+   - 예: "○○○를 처음 적용한 사람들이 가장 먼저 느낀 변화"
+   - 예: "○○○가 통장에 처음 흔적을 남기는 순간"
+   - 예: "○○○ 한 달 차에 가장 먼저 무너지는 한 가지"
+
+3. **PART 5 마지막 소제목** (확장/사회증명)
+   - 예: "○○○를 익힌 사람들의 5년 뒤가 완전히 다른 이유"
+   - 예: "○○○로 자리잡은 사람들이 다시는 돌아가지 않는 이유"
+   - 예: "○○○ 이후, 1년 만에 가장 크게 달라지는 단 한 가지"
+
+❌ 챕터 제목에는 컨셉명 절대 등장 X (5개 챕터 제목엔 안 들어감)
+❌ 매 PART에 박지 말 것. 정확히 3곳.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✍️ 소제목 톤: 한국 자기계발 베스트셀러 + 마케팅 뇌과학
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+각 PART당 소제목 4개. 모두 다른 패턴 + 명사·동사 엔딩 섞기 (4개 모두 같은 엔딩 금지).
+
+[좋은 패턴 풀 - 매번 다르게]
+1. 통계 충격형 — "1년 안에 99%가 다시 무너진다", "한 달 차에 90%가 다시 무너지는 정확한 이유"
+2. 인지부조화형 — "의지로 버틴 사람일수록 더 크게 무너진다"
+3. 뇌과학 권위형 — "감정이 폭발할 때 뇌는 정확히 어디부터 멈추는가", "신경회로가 새로 깔리고 있다는 4가지 신호"
+4. 임박감/손해회피형 — "이 90초를 놓치면 다시 일어서는 데 며칠이 걸린다"
+5. 정체성 전환형 — "한 번 회복한 뇌는 다시는 무너지지 않는다"
+6. 호기심 갭형 — "단번에 회복한 사람들이 모두 무의식적으로 하는 행동"
+7. 이중/삼중 보상형 — "회복 후 6개월 만에 통장과 인간관계가 함께 변한다"
+8. 인그룹 사회증명형 — "○○를 익힌 사람들의 5년 뒤가 완전히 다른 이유"
+
+[자연스러움 원칙 - 절대 어기지 말 것]
+- 어법 검사: 주어와 동사가 자연스럽게 연결되는가? ("회복이 굴러간다" X — 회복은 안 굴러감)
+- 추상 명사 의인화 금지: "○○가 멈춘다", "○○가 굴러간다", "○○ 위에 얹는다" (시스템/회복 같은 추상 명사를 사람/물건처럼)
+- 과장 형용사 금지: "흔적도 없다", "통째로", "완전히" (꼭 필요할 때만)
+- 추상 X, 구체 O: "많은 사람" → "월급 280만원짜리 7년차 회사원"
+- 도구/플랫폼명 적극: 네이버, 카카오, 노션, 카톡, 캘린더, 구글 시트
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 즉시 폐기 표현
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+특정 작가 고유어 (절대 금지): 자청 / 역행자 / 자의식 해체 / 유전자 역행 / 원시인 / 추월차선 / 아토믹 해빗 / 언카피어블
+AI 클리셰: 졸업 / 정체 / 마지막 한 수 / 다른 차원 / 결정적 시그널 / 진짜 게임 / 흔적도 없다 / 사건이 아니다 / 회로가 박혔다
+시스템 의인화: "○○가 멈춘 날", "○○ 위에 얹다", "○○를 졸업한", "회복이 굴러가다"
+뇌과학 비유 남용: "뇌 회로가 박혔다", "뇌 회로가 새로 깔린다" (전체 목차에 뇌·신경회로는 사실 진술로 1~2회만, 비유 남용 X)
+밍밍: 효과적인 / 성공적인 / ~의 모든 것 / ~하는 방법 / 알아야 할 / 의 중요성
+유치 비유: 나침반 / 열쇠 / 보물 / 황금 / 마법 / 파이프라인 / 엔진 / 톱니바퀴 / 사이클 / 눈덩이
+참고서: 첫걸음 / 완벽가이드 / 핵심정리 / 기초/중급/고급 / 첫 설계 / 첫 셋업
+챕터 제목 라벨: "발굴 —", "1단계:", "STEP 1." 같은 분리 형식
+의문문 문어체: "왜 ~는 ~하지 못하는가" 식의 한 PART에 1개까지만
+콜론(:) — 단 한 번도 쓰지 마라
+숫자 중복 금지: 전체 목차에서 같은 숫자(예: 3시간 + 3개월) 두 번 등장 금지
+숫자 표기 - 부호 금지: "-12%" "+30%" 같은 부호 사용 X. "12% 폭락에도", "30% 상승하면" 식으로
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 출력 형식 (이 형식 외 어떤 텍스트도 출력 금지)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[책 시그니처 컨셉]
+○○○ + (시스템/구조/공식/알고리즘) | 한 줄 설명
+
+PART 1. [13~18자, 좌절 + 통계 충격]
+- [통계 충격 또는 결정적 함정형]
+- [인지부조화/통념 박살형]
+- [패턴 - 위 8개 중 다른 것]
+- [컨셉명 첫 등장: 자연스러운 도입]
+
+PART 2. [13~18자, 통념 박살 + 뇌과학 권위]
+- [패턴]
+- [패턴 - 다른 것]
+- [패턴 - 또 다른 것]
+- [패턴 - 또 다른 것]
+
+PART 3. [13~18자, 첫 사건/결정적 순간]
+- [패턴]
+- [임박감/손해회피형]
+- [패턴]
+- [컨셉명 등장 가능: "○○○를 처음 적용한 사람들이 가장 먼저 느낀 변화" — PART 4에 넣을 거면 여기는 일반 패턴]
+
+PART 4. [13~18자, 정체성 전환 선언]
+- [컨셉명 등장 가능: "○○○가 본격 작동하는 4가지 신호" — PART 3에 안 넣었다면 여기에]
+- [뇌과학 권위형 또는 통계형]
+- [패턴]
+- [패턴]
+
+PART 5. [13~18자, 도약/이중 보상]
+- [호기심 갭형]
+- [이중/삼중 보상형]
+- [패턴 - 또 다른 것]
+- [컨셉명 세 번째 등장: 인그룹 사회증명]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 출력 전 자가 점검 (반드시 통과)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+출력 직전에 5가지 모두 통과해야 한다. 하나라도 No면 다시 써라.
+
+체크 1. 5개 챕터 제목만 이어 읽었을 때 "X였던 사람이 Y로 바뀐다"는 변화 서사가 또렷한가?
+체크 2. 통념 박살(인지부조화) 패턴이 5개 챕터+20개 소제목 안에 3개 이상 박혀있는가?
+체크 3. 구체적 숫자(시간/금액/비율)가 8개 이상 등장하는가?
+체크 4. 평이한 표현("~의 방법", "~의 모든 것", "~의 중요성", "효과적인", "성공적인")이 0개인가?
+체크 5. 5초간 훑어본 가상 독자가 "이건 안 사면 손해"라고 느낄 만한 손실회피 트리거가 챕터 제목 5개 중 2개 이상에 있는가?
+체크 6. 호기심 갭(결과만 보이고 방법/이유는 숨김)이 20개 소제목 중 10개 이상에 박혀 있는가? — "결과만 보이는데 본문을 사야 알 수 있는 한 줄"이 절반 이상이어야 결제 전환됨.
+체크 7. 컨셉명 글자 수를 단정하는 표현("세 글자", "네 글자", "단 한 단어")이 단 하나도 없는가? — 하나라도 있으면 즉시 전체 다시 쓰기.
+
+목차만 출력. 콜론 금지. 매 소제목 다른 패턴. 명사·동사 엔딩 섞기. 어법 어색한 표현 즉시 폐기. 각 PART는 정확히 소제목 4개. 컨셉명 글자수 단정 금지. 자가점검 결과는 출력하지 말 것."""
+    return ask_ai(prompt, 0.85, ensure_quality=True)
 
 
 def generate_content_premium(subtopic, chapter, questions, answers, topic, persona):
@@ -4289,7 +4396,7 @@ def generate_content_premium(subtopic, chapter, questions, answers, topic, perso
 {'''
 📊 본문 중간에 비교표 1개 필수:
 <table style="width:100%; border-collapse:collapse; margin:20px 0;">
-<tr style="background:#1a1a1a;"><th style="border:1px solid #333;padding:12px;color:#C9A24B;">구분</th><th style="border:1px solid #333;padding:12px;color:#C9A24B;">기존 방식</th><th style="border:1px solid #333;padding:12px;color:#C9A24B;">새로운 방식</th></tr>
+<tr style="background:#1a1a1a;"><th style="border:1px solid #333;padding:12px;color:#A98E5F;">구분</th><th style="border:1px solid #333;padding:12px;color:#A98E5F;">기존 방식</th><th style="border:1px solid #333;padding:12px;color:#A98E5F;">새로운 방식</th></tr>
 <tr><td style="border:1px solid #333;padding:10px;">항목</td><td style="border:1px solid #333;padding:10px;">내용</td><td style="border:1px solid #333;padding:10px;">내용</td></tr>
 </table>
 ''' if include_table else ''}
@@ -4314,30 +4421,8 @@ def generate_content_premium(subtopic, chapter, questions, answers, topic, perso
 ❌ 같은 이름 반복 (민준, 지수가 계속 X)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔥 몰입·충격 어조 (자청식 몰입감 — 특정 작가 고유어는 제외)
+📏 분량: 1800~2200자
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- 도입부터 통념을 정면으로 깬다. 독자가 "어, 내가 알던 거랑 반대네" 하고 멈칫하게.
-- 글 중간마다 '작은 충격'을 심어라: 예상과 반대되는 사실, 뒤집히는 데이터, 의외의 결론.
-- 한 호흡에 읽히는 리듬 — 짧은 단정문으로 치고, 긴 문장으로 풀고, 다시 끊는다.
-- "왜?"를 계속 만들어 다음 문단을 안 읽고는 못 배기게 한다(궁금증 갭).
-- 충격 뒤엔 반드시 '그래서 무엇을 어떻게'의 실질이 온다. 겁만 주고 끝내지 않는다.
-- 자청·역행자 등 특정 작가의 '단어'는 절대 쓰지 않는다. 몰입감과 태도만 가져온다.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎓 전문성 (아마추어 글과 가르는 지점)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- 추상 주장 1개당 근거 1개(데이터·연구·구체 사례·숫자)를 반드시 붙인다.
-- 메커니즘을 설명하라. "왜 그렇게 되는가"의 원리와 과정을 단계로 풀어라.
-- 바로 따라 할 수 있게: 무엇을·어디서·어떤 순서로·얼마나, 구체적으로.
-- 흔한 조언의 한계를 짚고, 더 정확한 기준·예외를 제시한다(깊이의 증거).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📏 분량: 2400~3000자 (최소 2400자 이상, 전문성 있는 밀도로)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️ 길이는 사례·데이터·단계별 설명·메커니즘으로 채운다. 같은 말 반복·미사여구로 늘리면 즉시 실패.
 
 '{subtopic}' 본문 작성.
 - 시작: {current_hook}
@@ -4382,175 +4467,98 @@ Q3: [질문]"""
 # ==========================================
 # 메인 UI
 # ==========================================
-# 비디오 배경 헤더 — title_bg.webm / title_bg.mp4 를 여러 위치에서 자동 탐색
-def _find_header_video(exts=("webm", "mp4")):
-    """헤더 배경 영상을 찾는다.
-    우선순위: (1) title_bg.webm/mp4  (2) 폴더 안의 아무 .webm/.mp4 파일.
-    클라우드 배포 시 업로드한 임의 파일명도 자동으로 잡히게 한다."""
-    import glob
-    bases = []
-    try:
-        here = os.path.dirname(os.path.abspath(__file__))
-        bases.append(here)
-    except Exception:
-        pass
-    bases += [os.getcwd(), "", os.path.expanduser("~/Desktop"), "/Users/hyunwoo/Desktop"]
-    # 중복 제거(순서 유지)
-    seen = set(); ordered_bases = []
-    for b in bases:
-        if b not in seen:
-            seen.add(b); ordered_bases.append(b)
-
-    found = {}
-    # 1순위: title_bg.<ext>
-    for ext in exts:
-        for base in ordered_bases:
-            p = os.path.join(base, f"title_bg.{ext}") if base else f"title_bg.{ext}"
-            if p and os.path.exists(p):
-                found[ext] = p
-                break
-    # 2순위: 폴더 안의 아무 .<ext> 파일 (title_bg가 없을 때)
-    for ext in exts:
-        if ext in found:
-            continue
-        for base in ordered_bases:
-            pattern = os.path.join(base, f"*.{ext}") if base else f"*.{ext}"
-            try:
-                matches = sorted(glob.glob(pattern))
-            except Exception:
-                matches = []
-            if matches:
-                found[ext] = matches[0]
-                break
-    return found
-
-_header_videos = _find_header_video()
-header_video_webm_b64 = get_video_base64(_header_videos["webm"]) if "webm" in _header_videos else None
-header_video_mp4_b64 = get_video_base64(_header_videos["mp4"]) if "mp4" in _header_videos else None
-header_video_b64 = header_video_webm_b64 or header_video_mp4_b64  # 둘 중 하나라도 있으면 헤더 표시
-
-# 영상 파일을 못 찾으면, 어디를 찾았는지 화면에 알려준다 (디버그)
-if not header_video_b64:
-    try:
-        _here = os.path.dirname(os.path.abspath(__file__))
-    except Exception:
-        _here = "(알 수 없음)"
-    st.info(
-        "🎬 제목 배경 영상을 찾지 못했습니다. "
-        "`.mp4` 또는 `.webm` 영상 파일을 이 프로그램과 같은 폴더(저장소)에 올려 주세요. "
-        "(파일명은 아무거나 괜찮습니다 — 폴더 안의 첫 영상을 자동으로 사용합니다.)\n\n"
-        f"- 프로그램 폴더: `{_here}`\n"
-        f"- 현재 작업 폴더: `{os.getcwd()}`"
-    )
+# 비디오 배경 헤더
+# ebook.py와 같은 폴더의 title_bg.mp4 사용 (GitHub 저장소에 함께 푸시)
+video_path = str(Path(__file__).parent / "title_bg.mp4")
+header_video_b64 = get_video_base64_cached(video_path)
 
 if header_video_b64:
-    st.markdown("""
+    st.markdown(f"""
     <style>
-    .writey-brandbar {
+    .writey-brandbar {{
         display:flex; align-items:center; justify-content:space-between;
         padding:15px 24px; border-bottom:0.5px solid rgba(255,255,255,0.06);
-        margin-bottom:18px;
-    }
-    .writey-wordmark { font-size:18px; font-weight:500; letter-spacing:0.18em; color:#F5F3EF; }
-    .writey-cashtag { font-size:10px; letter-spacing:0.28em; color:#7A776F; margin-left:10px; }
-    .writey-author { font-size:11px; letter-spacing:0.1em; color:#7A776F; }
+        margin-bottom:30px;
+    }}
+    .writey-wordmark {{ font-size:18px; font-weight:500; letter-spacing:0.18em; color:#F5F3EF; }}
+    .writey-cashtag {{ font-size:10px; letter-spacing:0.28em; color:#7A776F; margin-left:10px; }}
+    .writey-author {{ font-size:11px; letter-spacing:0.1em; color:#7A776F; }}
+    .writey-title {{
+        font-family: 'Noto Serif KR','Nanum Myeongjo',serif !important;
+        font-size: 54px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.22em;
+        text-indent: 0.22em;
+        margin: 0;
+        color: #EDE9E0 !important;
+        -webkit-text-fill-color: #EDE9E0 !important;
+        background: none;
+        filter: none;
+    }}
+    .writey-eyebrow {{
+        display:flex; align-items:center; justify-content:center; gap:16px;
+        margin-bottom: 22px;
+    }}
+    .writey-eyebrow .we-text {{
+        color: #C2AA7E !important;
+        font-size: 11px !important;
+        letter-spacing: 0.45em !important;
+        text-indent: 0.45em;
+        font-weight: 500;
+    }}
+    .writey-eyebrow .we-line-l {{ width:30px; height:1px; background:linear-gradient(90deg,transparent,#A98E5F); }}
+    .writey-eyebrow .we-line-r {{ width:30px; height:1px; background:linear-gradient(90deg,#A98E5F,transparent); }}
+    .writey-divider {{
+        display:flex; align-items:center; justify-content:center; gap:10px; margin:24px auto 0;
+    }}
+    .writey-divider .wd-line-l {{ width:42px; height:1px; background:linear-gradient(90deg,transparent,#A98E5F); }}
+    .writey-divider .wd-line-r {{ width:42px; height:1px; background:linear-gradient(90deg,#A98E5F,transparent); }}
+    .writey-divider .wd-diamond {{ width:4px; height:4px; background:#A98E5F; transform:rotate(45deg); }}
+    .writey-tagline {{
+        color: #8A8780 !important;
+        font-size: 15px !important;
+        margin-top: 18px;
+        font-weight: 300;
+        letter-spacing: 0.03em;
+    }}
     </style>
     <div class="writey-brandbar">
         <div><span class="writey-wordmark">WRITEY</span><span class="writey-cashtag">CASHMAKER</span></div>
         <span class="writey-author">남현우 작가</span>
     </div>
-    """, unsafe_allow_html=True)
-
-    # 영상 히어로는 components.html(iframe)로 렌더 → 큰 base64 data URI도 정상 재생
-    _sources = ""
-    if header_video_webm_b64:
-        _sources += f'<source src="data:video/webm;base64,{header_video_webm_b64}" type="video/webm">'
-    if header_video_mp4_b64:
-        _sources += f'<source src="data:video/mp4;base64,{header_video_mp4_b64}" type="video/mp4">'
-    components.html(f"""
-    <!DOCTYPE html><html><head><meta charset="utf-8">
-    <style>
-        html,body {{ margin:0; padding:0; background:transparent; overflow:hidden; }}
-        .hero {{
-            position:relative; width:100%; height:320px;
-            border-radius:16px; overflow:hidden;
-            border:0.5px solid rgba(201,162,75,0.25);
-            box-shadow:0 18px 50px rgba(0,0,0,0.45);
-            font-family:'Pretendard','Apple SD Gothic Neo',sans-serif;
-            background:#0B0B0D;
-        }}
-        .hero video {{
-            position:absolute; top:0; left:0; width:100%; height:100%;
-            object-fit:cover; filter:brightness(0.45) saturate(1.15) contrast(1.05);
-        }}
-        .hero .veil {{
-            position:absolute; inset:0;
-            background:radial-gradient(ellipse at center, rgba(11,11,13,0.25) 0%, rgba(11,11,13,0.72) 100%);
-        }}
-        .hero .center {{
-            position:absolute; inset:0; display:flex; flex-direction:column;
-            justify-content:center; align-items:center; text-align:center;
-        }}
-        .eyebrow {{ color:#C9A24B; font-size:12px; letter-spacing:0.4em; margin-bottom:16px; font-weight:400; }}
-        .title {{ font-size:60px; font-weight:300; letter-spacing:0.14em; color:#FAF8F4; margin:0; }}
-        .divider {{ width:36px; height:1px; background:#C9A24B; margin:22px auto 0; }}
-        .tagline {{ color:#C8C5BE; font-size:15px; margin-top:18px; font-weight:300; letter-spacing:0.03em; }}
-    </style></head>
-    <body>
-        <div class="hero">
-            <video id="bgv" autoplay muted loop playsinline preload="auto">
-                {_sources}
-            </video>
-            <div class="veil"></div>
-            <div class="center">
-                <div class="eyebrow">AI EBOOK Writer</div>
-                <h1 class="title">WRITEY</h1>
-                <div class="divider"></div>
-                <p class="tagline">6개의 질문에 답하면 AI가 목차부터 본문까지 완성합니다</p>
-            </div>
-            <div id="vdbg" style="position:absolute;left:10px;bottom:8px;font-size:10px;color:#C9A24B;font-family:monospace;opacity:0.9;background:rgba(0,0,0,0.4);padding:2px 8px;border-radius:6px;"></div>
+    <div style="position:relative;border-radius:16px;overflow:hidden;margin-bottom:35px;border:0.5px solid rgba(169,142,95,0.18);">
+        <video autoplay muted loop playsinline style="width:100%;height:300px;object-fit:cover;filter:brightness(0.28) saturate(1.1);">
+            <source src="data:video/mp4;base64,{header_video_b64}" type="video/mp4">
+        </video>
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg, rgba(11,11,13,0.4) 0%, rgba(11,11,13,0.7) 100%);"></div>
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
+            <div class="writey-eyebrow"><span class="we-line-l"></span><span class="we-text">PREMIUM EBOOK MAKER</span><span class="we-line-r"></span></div>
+            <h1 class="writey-title">WRITEY</h1>
+            <div class="writey-divider"><span class="wd-line-l"></span><span class="wd-diamond"></span><span class="wd-line-r"></span></div>
+            <p class="writey-tagline">6개의 질문에 답하면 AI가 목차부터 본문까지 완성합니다</p>
         </div>
-        <script>
-        (function() {{
-            var v = document.getElementById('bgv');
-            var dbg = document.getElementById('vdbg');
-            function show(msg) {{ if(dbg){{ dbg.textContent = msg; dbg.style.opacity = '0.9'; }} }}
-            if (!v) {{ show('video 태그 없음'); return; }}
-            v.muted = true; v.defaultMuted = true;
-            var attempts = 0;
-            var tryPlay = function() {{
-                attempts++;
-                var p = v.play();
-                if (p && p.then) {{
-                    p.then(function() {{ show('재생 중 ✓'); setTimeout(function(){{ dbg.style.opacity='0'; }}, 2000); }})
-                     .catch(function(err) {{
-                        show('재생차단(' + err.name + ') 재시도' + attempts);
-                        if (attempts < 6) setTimeout(tryPlay, 500);
-                     }});
-                }} else {{ show('재생 시도(구형 브라우저)'); }}
-            }};
-            v.addEventListener('loadeddata', tryPlay);
-            v.addEventListener('canplay', tryPlay);
-            v.addEventListener('error', function() {{ show('영상 로드 실패 — 코덱/포맷 확인'); }});
-            var src = v.querySelector('source');
-            if (src) src.addEventListener('error', function() {{ show('소스 디코딩 실패'); }});
-            tryPlay();
-            setTimeout(function() {{ if (v.paused && v.readyState < 2) show('영상 데이터 미로딩(파일 확인)'); else if (v.paused) tryPlay(); }}, 1500);
-        }})();
-        </script>
-    </body></html>
-    """, height=340)
+    </div>
+    """, unsafe_allow_html=True)
 else:
     st.markdown("""
     <div style="display:flex;align-items:center;justify-content:space-between;padding:15px 24px;border-bottom:0.5px solid rgba(255,255,255,0.06);margin-bottom:30px;">
         <div><span style="font-size:18px;font-weight:500;letter-spacing:0.18em;color:#F5F3EF;">WRITEY</span><span style="font-size:10px;letter-spacing:0.28em;color:#7A776F;margin-left:10px;">CASHMAKER</span></div>
         <span style="font-size:11px;letter-spacing:0.1em;color:#7A776F;">남현우 작가</span>
     </div>
-    <div style="text-align:center;padding:56px 20px 44px;margin-bottom:30px;background:#0B0B0D;border-radius:16px;border:0.5px solid rgba(201,162,75,0.18);">
-        <div style="font-size:12px;letter-spacing:0.4em;color:#C9A24B;margin-bottom:16px;">AI EBOOK Writer</div>
-        <h1 style="font-family:'S-CoreDream','Pretendard',sans-serif;font-size:54px;font-weight:300;letter-spacing:0.14em;color:#FAF8F4;margin:0;">WRITEY</h1>
-        <div style="width:36px;height:1px;background:#C9A24B;margin:22px auto 0;"></div>
-        <p style="color:#8A8780;font-size:15px;margin-top:18px;font-weight:300;">6개의 질문에 답하면 AI가 목차부터 본문까지 완성합니다</p>
+    <div style="position:relative;text-align:center;padding:66px 20px 54px;margin-bottom:30px;background:rgba(255,255,255,0.022);border-radius:14px;border:1px solid rgba(255,255,255,0.07);overflow:hidden;">
+        <div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:64px;height:1px;background:#A98E5F;"></div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:24px;">
+            <span style="width:30px;height:1px;background:linear-gradient(90deg,transparent,#A98E5F);"></span>
+            <span style="font-size:11px;letter-spacing:0.45em;color:#A98E5F;font-weight:500;text-indent:0.45em;">PREMIUM EBOOK MAKER</span>
+            <span style="width:30px;height:1px;background:linear-gradient(90deg,#A98E5F,transparent);"></span>
+        </div>
+        <h1 style="font-family:'Noto Serif KR','Nanum Myeongjo',serif;font-size:52px;font-weight:600;letter-spacing:0.22em;margin:0;text-indent:0.22em;color:#EDE9E0;">WRITEY</h1>
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:24px auto 0;">
+            <span style="width:42px;height:1px;background:linear-gradient(90deg,transparent,#A98E5F);"></span>
+            <span style="width:4px;height:4px;background:#A98E5F;transform:rotate(45deg);"></span>
+            <span style="width:42px;height:1px;background:linear-gradient(90deg,#A98E5F,transparent);"></span>
+        </div>
+        <p style="color:#9A968C;font-size:15px;margin-top:20px;font-weight:300;letter-spacing:0.04em;">6개의 질문에 답하면 AI가 목차부터 본문까지 완성합니다</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -4586,7 +4594,7 @@ if not st.session_state.get('interview_completed', False):
     # ========== STEP 1: 기본 정보 ==========
     if step == 1:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">👋 먼저 당신에 대해 알려주세요</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">전자책의 저자로서 기본 정보를 입력해주세요</p>
         </div>
@@ -4618,7 +4626,7 @@ if not st.session_state.get('interview_completed', False):
     # ========== STEP 2: 주제와 노하우 ==========
     elif step == 2:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">📚 어떤 내용을 담을까요?</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">당신만의 핵심 노하우를 알려주세요</p>
         </div>
@@ -4633,20 +4641,6 @@ if not st.session_state.get('interview_completed', False):
         with st.form(key="step2_form"):
             topic = st.text_input("전자책 주제", value=st.session_state['temp_interview'].get('topic', ''), placeholder="예: 월 100만원 배당 투자, 하루 1시간 블로그로 월 300 벌기")
             core_method = st.text_area("당신만의 핵심 방법/노하우는?", value=st.session_state['temp_interview'].get('core_method', ''), height=120, placeholder="예: 저는 고배당 ETF를 활용해서 안정적으로 수익을 내는 방법을 알려드립니다. 핵심은 분산투자와 복리의 마법입니다...")
-            detailed_knowhow = st.text_area(
-                "구체적인 노하우·실전 디테일 (선택, 많을수록 책이 깊어집니다)",
-                value=st.session_state['temp_interview'].get('detailed_knowhow', ''),
-                height=180,
-                placeholder=(
-                    "여기에 적은 내용이 목차와 본문에 그대로 녹아 들어갑니다. 구체적일수록 좋습니다.\n\n"
-                    "예)\n"
-                    "- 실제 수치/사례: '2년간 매달 50만원씩 적립, 3년 차에 월 배당 32만원 돌파'\n"
-                    "- 단계별 방법: '1단계 종목 스크리닝 → 2단계 분할매수 → 3단계 배당 재투자'\n"
-                    "- 자주 하는 실수: '초보는 고배당률만 보고 사는데, 배당성향 80% 넘으면 위험'\n"
-                    "- 나만의 기준/팁: '나는 배당락 2주 전엔 절대 안 산다', '월 단위로 리밸런싱'\n"
-                    "- 도구/플랫폼: '네이버 증권으로 배당 캘린더 관리, 구글시트로 수익률 추적'"
-                ),
-            )
 
             col1, col2 = st.columns([1, 1])
             with col2:
@@ -4654,18 +4648,17 @@ if not st.session_state.get('interview_completed', False):
 
             if submitted:
                 if not topic.strip() or not core_method.strip():
-                    st.error("주제와 핵심 방법은 꼭 입력해주세요 (구체적 노하우는 선택)")
+                    st.error("모든 항목을 입력해주세요")
                 else:
                     st.session_state['temp_interview']['topic'] = topic.strip()
                     st.session_state['temp_interview']['core_method'] = core_method.strip()
-                    st.session_state['temp_interview']['detailed_knowhow'] = detailed_knowhow.strip()
                     st.session_state['interview_step'] = 3
                     st.rerun()
 
     # ========== STEP 3: 타겟 독자 (AI 추천) ==========
     elif step == 3:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">🎯 누구를 위한 책인가요?</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">AI가 시장 데이터를 분석해 최적의 타겟을 추천해드립니다</p>
         </div>
@@ -4696,7 +4689,7 @@ if not st.session_state.get('interview_completed', False):
             for idx, persona in enumerate(personas[:3]):
                 is_selected = (idx == selected_idx)
                 border_color = "var(--gold)" if is_selected else "var(--line)"
-                bg_color = "rgba(201,162,75,0.1)" if is_selected else "rgba(20,20,20,0.5)"
+                bg_color = "rgba(169,142,95,0.1)" if is_selected else "rgba(20,20,20,0.5)"
 
                 pain_list = persona.get('pain_points', [])[:3]
                 pains_text = " / ".join(pain_list) if pain_list else "고민 분석 중..."
@@ -4763,7 +4756,7 @@ if not st.session_state.get('interview_completed', False):
     # ========== STEP 4: 스토리 & 경력 ==========
     elif step == 4:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">💪 당신의 이야기를 들려주세요</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">독자들이 공감할 수 있는 진솔한 경험담과 경력</p>
         </div>
@@ -4795,7 +4788,7 @@ if not st.session_state.get('interview_completed', False):
     # ========== STEP 5: 마무리 ==========
     elif step == 5:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">✨ 마지막으로!</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">독자에게 전하고 싶은 메시지</p>
         </div>
@@ -4847,7 +4840,7 @@ if not st.session_state.get('interview_completed', False):
     # ========== STEP 6: 목차 확인 및 본문 생성 ==========
     elif step == 6:
         st.markdown("""
-        <div style="background:linear-gradient(135deg, rgba(201,162,75,0.1) 0%, rgba(201,162,75,0.05) 100%);padding:30px;border-radius:15px;border-left:4px solid var(--gold);margin-bottom:30px;">
+        <div style="background:rgba(255,255,255,0.022);padding:28px 30px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);border-left:2px solid var(--gold);margin-bottom:30px;">
             <h3 style="color:var(--gold);margin:0 0 10px 0;">📋 목차 확인 및 수정</h3>
             <p style="color:var(--text);margin:0;opacity:0.9;">생성된 목차를 확인하고, 직접 수정하거나 AI로 재생성할 수 있습니다</p>
         </div>
@@ -4870,7 +4863,7 @@ if not st.session_state.get('interview_completed', False):
         if book_concept:
             with st.expander("💡 이 책의 고유 컨셉 보기", expanded=False):
                 st.markdown(f"""
-                <div style="background:rgba(201,162,75,0.1);padding:20px;border-radius:10px;border-left:3px solid var(--gold);">
+                <div style="background:rgba(169,142,95,0.1);padding:20px;border-radius:10px;border-left:3px solid var(--gold);">
                     {book_concept.replace(chr(10), '<br>')}
                 </div>
                 """, unsafe_allow_html=True)
@@ -4880,6 +4873,32 @@ if not st.session_state.get('interview_completed', False):
         # 목차 표시 및 편집
         outline = st.session_state.get('outline', [])
         chapters = st.session_state.get('chapters', {})
+
+        # ── 목차 수정사항 선반영 ──
+        # 입력창에서 바뀐 챕터/소제목 이름을 렌더링 '전에' 적용한다.
+        # (이전 방식은 렌더링 중 st.rerun()을 호출해서, 목차 수정 직후
+        #  '본문 생성하기' 클릭이 무시되고 공백 입력 시 무한 깜박임이 발생했음)
+        for i in range(len(outline)):
+            ch_old = outline[i]
+            w = st.session_state.get(f"ch_edit_{i}")
+            if isinstance(w, str):
+                new_name = w.strip()
+                if new_name and new_name != ch_old and new_name not in chapters and ch_old in chapters:
+                    outline[i] = new_name
+                    chapters[new_name] = chapters.pop(ch_old)
+            ch_now = outline[i]
+            ch_entry = chapters.get(ch_now)
+            if not ch_entry:
+                continue
+            subs = ch_entry.get('subtopics', [])
+            sd = ch_entry.setdefault('subtopic_data', {})
+            for j in range(len(subs)):
+                wv = st.session_state.get(f"sub_edit_{i}_{j}")
+                if isinstance(wv, str):
+                    ns = wv.strip()
+                    if ns and ns != subs[j]:
+                        sd[ns] = sd.pop(subs[j], {'questions': [], 'answers': [], 'content': ''})
+                        subs[j] = ns
 
         if outline:
             st.markdown("### 📖 목차 구성")
@@ -4891,32 +4910,39 @@ if not st.session_state.get('interview_completed', False):
 
                 # 챕터 헤더
                 st.markdown(f"""
-                <div style="background:linear-gradient(90deg, rgba(201,162,75,0.2) 0%, rgba(30,30,30,0.9) 100%);
+                <div style="background:rgba(169,142,95,0.10);
                             padding:15px 20px;border-radius:10px;margin:20px 0 10px 0;
                             border-left:4px solid var(--gold);">
                     <span style="color:var(--gold);font-weight:bold;font-size:18px;">PART {i+1}</span>
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 챕터 제목 편집
-                new_ch_name = st.text_input(
-                    f"챕터 {i+1} 제목",
-                    value=ch,
-                    key=f"ch_edit_{i}",
-                    label_visibility="collapsed"
-                )
-
-                # 챕터 이름 변경 적용
-                if new_ch_name != ch and new_ch_name.strip():
-                    # 목차에서 이름 변경
-                    st.session_state['outline'][i] = new_ch_name.strip()
-                    # chapters 딕셔너리에서도 키 변경
-                    st.session_state['chapters'][new_ch_name.strip()] = st.session_state['chapters'].pop(ch)
-                    st.rerun()
+                # 챕터 제목 편집 + 챕터 소제목 전체 재생성 버튼
+                ch_col1, ch_col2 = st.columns([5.2, 0.8])
+                with ch_col1:
+                    new_ch_name = st.text_input(
+                        f"챕터 {i+1} 제목",
+                        value=ch,
+                        key=f"ch_edit_{i}",
+                        label_visibility="collapsed"
+                    )
+                with ch_col2:
+                    if st.button("🔄", key=f"regen_ch_{i}", help="이 챕터의 소제목 4개를 AI로 새로 생성", use_container_width=True):
+                        with st.spinner("소제목 재생성 중..."):
+                            new_subs = regenerate_chapter_subtopics(ch, i)
+                        if new_subs:
+                            ch_data['subtopics'] = new_subs
+                            ch_data['subtopic_data'] = {s: {'questions': [], 'answers': [], 'content': ''} for s in new_subs}
+                            # 입력창에 남은 이전 소제목 상태 제거 (되돌림 방지)
+                            for _j in range(10):
+                                st.session_state.pop(f"sub_edit_{i}_{_j}", None)
+                            st.rerun()
+                        else:
+                            st.error("재생성 실패. 다시 시도해주세요.")
 
                 # 소제목들
                 for j, sub in enumerate(subtopics):
-                    col1, col2 = st.columns([0.5, 5.5])
+                    col1, col2, col3 = st.columns([0.4, 4.8, 0.8])
                     with col1:
                         st.markdown(f"<div style='color:var(--text2);padding-top:8px;'>•</div>", unsafe_allow_html=True)
                     with col2:
@@ -4926,17 +4952,24 @@ if not st.session_state.get('interview_completed', False):
                             key=f"sub_edit_{i}_{j}",
                             label_visibility="collapsed"
                         )
-                        # 소제목 변경 적용
-                        if new_sub != sub and new_sub.strip():
-                            st.session_state['chapters'][ch]['subtopics'][j] = new_sub.strip()
-                            # subtopic_data도 업데이트
-                            old_data = st.session_state['chapters'][ch]['subtopic_data'].pop(sub, {'questions': [], 'answers': [], 'content': ''})
-                            st.session_state['chapters'][ch]['subtopic_data'][new_sub.strip()] = old_data
-                            st.rerun()
+                    with col3:
+                        if st.button("🔄", key=f"regen_sub_{i}_{j}", help="이 소제목만 AI로 새로 생성", use_container_width=True):
+                            with st.spinner("소제목 재생성 중..."):
+                                new_one = regenerate_single_subtopic(ch, j, subtopics)
+                            if new_one:
+                                sd = ch_data.setdefault('subtopic_data', {})
+                                sd[new_one] = sd.pop(sub, {'questions': [], 'answers': [], 'content': ''})
+                                sd[new_one]['content'] = ''  # 제목이 바뀌었으니 본문은 새로 생성
+                                ch_data['subtopics'][j] = new_one
+                                st.session_state.pop(f"sub_edit_{i}_{j}", None)
+                                st.rerun()
+                            else:
+                                st.error("재생성 실패. 다시 시도해주세요.")
 
             st.markdown("---")
 
         # 하단 버튼
+        progress_box = st.empty()  # 진행 상황을 전체 폭으로 표시
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("← 이전", key="interview_prev_6", use_container_width=True):
@@ -4944,8 +4977,7 @@ if not st.session_state.get('interview_completed', False):
                 st.rerun()
         with col2:
             if st.button("✍️ 본문 생성하기", key="generate_body", use_container_width=True, type="primary"):
-                progress_box = st.empty()
-                interview_data = st.session_state.get('interview_data', st.session_state['temp_interview'])
+                interview_data = st.session_state.get('interview_data', st.session_state.get('temp_interview', {}))
                 success = generate_body_from_outline(interview_data, progress_box)
 
                 if success:
@@ -4996,8 +5028,8 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 # API 키가 없으면 환영 화면 표시
 if not get_api_key():
     st.markdown("""
-    <div style="background:linear-gradient(135deg, rgba(201,162,75,0.2) 0%, rgba(30,30,30,0.98) 100%);
-                border:0.5px solid rgba(201,162,75,0.4);border-radius:25px;padding:50px 40px;text-align:center;margin:20px 0;">
+    <div style="background:rgba(255,255,255,0.022);
+                border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:50px 40px;text-align:center;margin:20px 0;">
         <p style="font-size:60px;margin:0 0 20px 0;">👋</p>
         <h2 style="color:var(--gold);font-size:42px;margin-bottom:20px;font-weight:700;">환영합니다!</h2>
         <p style="color:var(--text);font-size:24px;margin-bottom:10px;line-height:1.8;">
@@ -5014,7 +5046,7 @@ if not get_api_key():
     <div style="background:#1a1a2e;border:3px solid #e74c3c;padding:30px;border-radius:20px;margin:30px 0;">
         <p style="font-size:28px;margin:0;line-height:1.6;color:#fff;text-align:center;">
             🔑 <b style="color:#e74c3c;">첫 번째 할 일</b><br><br>
-            <span style="font-size:24px;">👈 왼쪽에 <span style="color:#C9A24B;font-weight:700;">"API 키"</span>를 넣어야 해요</span>
+            <span style="font-size:24px;">👈 왼쪽에 <span style="color:#A98E5F;font-weight:700;">"API 키"</span>를 넣어야 해요</span>
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -5087,7 +5119,7 @@ if not get_api_key():
 
     # 마무리
     st.markdown("""
-    <div style="background:linear-gradient(135deg, #C9A24B 0%, #A8852F 100%);padding:30px;border-radius:20px;margin:40px 0;text-align:center;">
+    <div style="background:rgba(169,142,95,0.10);border:1px solid rgba(169,142,95,0.35);padding:30px;border-radius:12px;margin:40px 0;text-align:center;">
         <p style="font-size:28px;margin:0 0 10px 0;color:#000;font-weight:800;">
             👈 복사한 키를 왼쪽 사이드바에 붙여넣기
         </p>
@@ -5144,7 +5176,7 @@ if current == 0:
 
         # 빠른 제작 버튼 (자동 모드)
         st.markdown("""
-        <div style="background:linear-gradient(135deg, #C9A24B 0%, #A8852F 100%);padding:20px;border-radius:15px;margin:20px 0;text-align:center;">
+        <div style="background:rgba(169,142,95,0.10);border:1px solid rgba(169,142,95,0.35);padding:20px;border-radius:12px;margin:20px 0;text-align:center;">
             <p style="font-size:14px;margin:0 0 5px 0;color:#000;opacity:0.8;">⚡ 클릭 한 번으로</p>
             <p style="font-size:20px;margin:0;color:#000;font-weight:800;">목차 + 본문 자동 완성</p>
         </div>
@@ -5299,7 +5331,7 @@ if current == 0:
                         search_url = platform['url'] + search_query
                         st.markdown(f"""
                         <a href="{search_url}" target="_blank" style="text-decoration:none;display:block;margin-bottom:15px;">
-                            <div style="background:rgba(25,25,25,0.9);border:1px solid rgba(201,162,75,0.3);border-radius:16px;overflow:hidden;transition:all 0.3s ease;">
+                            <div style="background:rgba(25,25,25,0.9);border:1px solid rgba(169,142,95,0.3);border-radius:16px;overflow:hidden;transition:all 0.3s ease;">
                                 <div style="height:80px;background:{platform['gradient']};display:flex;align-items:center;justify-content:center;">
                                     <span style="font-size:40px;">{platform['icon']}</span>
                                 </div>
@@ -5558,7 +5590,7 @@ elif current == 2:
                     </div>
                     """, unsafe_allow_html=True)
         else:
-            st.markdown('<div style="text-align:center;padding:60px;background:rgba(255,255,255,0.03);border-radius:16px;border:1px solid rgba(201,162,75,0.15);"><p style="color:rgba(255,255,255,0.5);">분석 버튼을 눌러주세요</p></div>', unsafe_allow_html=True)
+            st.markdown('<div style="text-align:center;padding:60px;background:rgba(255,255,255,0.03);border-radius:16px;border:1px solid rgba(169,142,95,0.15);"><p style="color:rgba(255,255,255,0.5);">분석 버튼을 눌러주세요</p></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="next-section"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -6124,6 +6156,8 @@ elif current == 4:
                                         subtopics[current_ch].append(st_name)
 
                         if chapters:
+                            with st.spinner("목차 표현 다듬는 중..."):
+                                chapters, subtopics = polish_outline(chapters, subtopics, st.session_state.get('topic', ''))
                             st.session_state['outline'] = chapters
                             st.session_state['chapters'] = {}
                             for ch in chapters:
@@ -6206,7 +6240,7 @@ elif current == 4:
                 # 보기 모드 - 예쁘게 표시
                 for ch_idx, ch in enumerate(st.session_state['outline']):
                     st.markdown(f"""
-                    <div style="background:linear-gradient(135deg, rgba(201,162,75,0.15) 0%, rgba(201,162,75,0.05) 100%);
+                    <div style="background:linear-gradient(135deg, rgba(169,142,95,0.15) 0%, rgba(169,142,95,0.05) 100%);
                                 padding:16px 20px;border-radius:12px;margin-bottom:8px;border-left:4px solid var(--gold);">
                         <span style="color:var(--gold);font-size:13px;font-weight:600;">PART {ch_idx + 1}</span>
                         <p style="color:var(--text);font-size:17px;font-weight:600;margin:8px 0 0 0;">{ch}</p>
@@ -6224,13 +6258,16 @@ elif current == 4:
                     st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
 
         else:
-            st.markdown('<div style="text-align:center;padding:60px;background:rgba(255,255,255,0.03);border-radius:16px;border:1px solid rgba(201,162,75,0.15);"><p style="color:rgba(255,255,255,0.5);">목차를 생성해주세요</p></div>', unsafe_allow_html=True)
+            st.markdown('<div style="text-align:center;padding:60px;background:rgba(255,255,255,0.03);border-radius:16px;border:1px solid rgba(169,142,95,0.15);"><p style="color:rgba(255,255,255,0.5);">목차를 생성해주세요</p></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="next-section"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         if st.button("이전", key="p4_prev", use_container_width=True):
-            go_prev()
+            if st.session_state.get('interview_completed'):
+                st.session_state['current_page'] = 0  # 인터뷰 사용자는 주제 페이지로
+            else:
+                go_prev()
             st.rerun()
     with c3:
         if st.button("다음 본문", key="p4_next", use_container_width=True):
@@ -6348,9 +6385,9 @@ elif current == 5:
                             background:#ffffff !important;
                             padding:25px 30px;
                             border-radius:12px;
-                            border:1px solid rgba(201,162,75,0.3);
+                            border:1px solid rgba(169,142,95,0.3);
                             margin:15px 0;
-                            font-family:'S-CoreDream', sans-serif !important;
+                            font-family:'Pretendard Variable','Pretendard',sans-serif !important;
                             font-size:17px;
                             max-height:500px;
                             overflow-y:auto;
@@ -6408,7 +6445,7 @@ elif current == 5:
                                 st_data['content'] = edited
                                 st.rerun()
                     else:
-                        st.markdown('<div style="text-align:center;padding:80px 20px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px dashed rgba(201,162,75,0.3);"><p style="color:var(--text2);font-size:16px;">본문이 아직 없습니다<br>질문에 답변 후 "본문 생성" 버튼을 누르세요</p></div>', unsafe_allow_html=True)
+                        st.markdown('<div style="text-align:center;padding:80px 20px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px dashed rgba(169,142,95,0.3);"><p style="color:var(--text2);font-size:16px;">본문이 아직 없습니다<br>질문에 답변 후 "본문 생성" 버튼을 누르세요</p></div>', unsafe_allow_html=True)
             else:
                 st.info("이 챕터에는 소제목이 없습니다. 목차를 다시 생성해주세요.")
 
@@ -6417,11 +6454,7 @@ elif current == 5:
         full_content = get_full_content()
         if full_content:
             char_count = len(full_content.replace(' ', '').replace('\n', ''))
-            est_pages = estimate_docx_pages(
-                st.session_state.get('chapters', {}),
-                st.session_state.get('outline', [])
-            )
-            st.success(f"총 {char_count:,}자 | 약 {est_pages}페이지 (WORD A5 기준)")
+            st.success(f"총 {char_count:,}자 | 약 {char_count//500}페이지")
 
     st.markdown('<div class="next-section"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -6734,12 +6767,7 @@ elif current == 7:
 
         total = len(full.replace(' ', '').replace('\n', ''))
         if total > 0:
-            est_pages = estimate_docx_pages(
-                st.session_state.get('chapters', {}),
-                st.session_state.get('outline', [])
-            )
-            st.success(f"총 {total:,}자 | 약 {est_pages}페이지 (WORD A5 기준)")
-            st.caption("표지·판권·프롤로그·에필로그·저자소개와 소제목별 페이지 나눔까지 반영한 추정치입니다. 워드의 글꼴·자동 줄나눔에 따라 1~2페이지 오차가 있을 수 있습니다.")
+            st.success(f"총 {total:,}자 | 약 {total//500}페이지")
 
     with col2:
         st.markdown("### 현황")
@@ -6753,8 +6781,12 @@ elif current == 7:
     st.markdown('<div class="next-section"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
-        if st.button("이전", key="p7_prev", use_container_width=True):
-            go_prev()
+        if st.button("← 본문 수정", key="p7_prev", use_container_width=True):
+            st.session_state['current_page'] = 5  # 본문 편집 페이지로
+            st.rerun()
+    with c3:
+        if st.button("🎨 표지 디자인", key="p7_cover", use_container_width=True):
+            st.session_state['current_page'] = 6
             st.rerun()
 
 
@@ -6763,12 +6795,12 @@ st.markdown("""
     text-align: center;
     padding: 30px 20px;
     margin-top: 50px;
-    border-top: 1px solid rgba(201,162,75,0.3);
-    color: #ffffff !important;
-    font-size: 16px;
-    letter-spacing: 2px;
-    background: rgba(0,0,0,0.3);
+    border-top: 1px solid rgba(255,255,255,0.07);
+    color: #98948A !important;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    background: transparent;
 ">
-    <span style="color: #C9A24B;">CASHMAKER</span> | 제작: <span style="color: #ffffff;">남현우 작가</span>
+    <span style="color: #A98E5F;">CASHMAKER</span> · 제작 <span style="color: #ECE9E2;">남현우 작가</span>
 </div>
 """, unsafe_allow_html=True)
